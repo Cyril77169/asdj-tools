@@ -330,8 +330,8 @@ function viewHome() {
     `<main><input class="search" id="home-search" type="search" placeholder="🔍 Code, modèle, chef, type de machine…" autocomplete="off">
     ${summaryHTML(all, "#/tout?")}
     <div class="tiles">${tiles}</div>
-    <a class="teamband" href="#/equipes"><span class="tb-top"><span class="tb-ic">${SVG.team}</span><span class="tb-txt"><b>Les équipes</b><small>${teams.length} équipes · le matériel de chaque chef</small></span><span class="tb-chev">${SVG.chev}</span></span>
-      <span class="tb-badges">${teams.map(n => { const bad = all.some(m => m.equipe === n && URGENTS.includes(m.statut)); return `<span class="tb-b ${bad ? "warn" : ""}"><i>${n}</i>${esc(chef(n) || "—")}</span>`; }).join("")}</span></a>
+    <a class="sechead" href="#/equipes"><span class="tb-ic">${SVG.team}</span><b>Les équipes</b><span class="sp"></span><small>Tout voir</small>${SVG.chev}</a>
+    <div class="tgrid">${teams.map(n => teamCard(n, all)).join("")}</div>
     <a class="allband" href="#/tout"><span class="tb-ic">${SVG.list}</span><span class="tb-txt"><b>Toutes les machines</b><small>${all.length} machines</small></span><span class="tb-chev">${SVG.chev}</span></a>
     </main>`;
 }
@@ -362,17 +362,20 @@ function viewFamille(fid, q) {
     <div class="addbar"><button class="btn light" data-act="add" data-fam="${fid}">+ Ajouter une ${esc(f.un.toLowerCase())}</button></div>${retired}</main>`;
 }
 
+function teamCard(n, all) {
+  const l = all.filter(m => m.equipe === n).sort(byAlert), bad = l.filter(m => URGENTS.includes(m.statut));
+  const worst = bad.length ? bad[0].statut : null;
+  const minis = bad.map(m => `<span class="tmini" style="color:${sc(m.statut)}" title="${esc(m.id)}">${ICONS[m.famille] || ""}</span>`).join("");
+  return `<a class="tcard ${worst ? "bad" : ""}" href="#/equipe/${n}" style="--c:${worst ? sc(worst) : "var(--green)"}">
+    <span class="tnum">${n}</span><b>${esc(chef(n) || "Chef à indiquer")}</b><small>${l.length} machine${l.length > 1 ? "s" : ""}</small>
+    ${bad.length ? `<span class="tbad">${bad.length} en souci <span class="tminis">${minis}</span></span>` : `<span class="tok">✓ tout va bien</span>`}</a>`;
+}
 function teamPannes(n) { return S.events.filter(e => (e.type === "probleme" || e.type === "hs") && e.equipe === n).length; }
 function viewEquipes() {
   const all = actives();
-  const cards = teamNums().map(n => {
-    const l = all.filter(m => m.equipe === n).sort(byAlert), bad = l.filter(m => URGENTS.includes(m.statut)).length, p = teamPannes(n);
-    return `<a class="card" href="#/equipe/${n}" style="--c:${bad ? sc(l[0].statut) : "var(--green)"}"><span class="stripe"></span><span class="body team"><span class="badge">${n}</span>
-      <span style="flex:1;min-width:0"><span class="num" style="font-size:18px">${esc(chef(n) || "Chef à indiquer")}</span>
-      <div class="where">${l.length} machine${l.length > 1 ? "s" : ""}${bad ? ` · <b style="color:${sc(l[0].statut)}">${bad} en souci</b>` : ""}${p ? ` · ${p} panne${p > 1 ? "s" : ""} signalée${p > 1 ? "s" : ""} au total` : ""}</div>${barHTML(l)}</span></span></a>`;
-  }).join("");
+  const cards = `<div class="tgrid">${teamNums().map(n => { const p = teamPannes(n); return teamCard(n, all).replace("</a>", `${p ? `<span class="tpan">${p} panne${p > 1 ? "s" : ""} signalée${p > 1 ? "s" : ""} au total</span>` : ""}</a>`); }).join("")}</div>`;
   const dep = all.filter(m => m.equipe == null);
-  return header("Les équipes", "Le matériel de chaque chef") + `<main><div class="list">${cards}
+  return header("Les équipes", "Le matériel de chaque chef") + `<main>${cards}<div class="list" style="margin-top:12px">
     <a class="card" href="#/equipe/depot" style="--c:var(--s-disponible)"><span class="stripe"></span><span class="body team"><span class="badge depot">D</span>
       <span style="flex:1;min-width:0"><span class="num" style="font-size:18px">Sans équipe</span><div class="where">${dep.length} machine${dep.length > 1 ? "s" : ""} au dépôt ou en réparation</div>${barHTML(dep)}</span></span></a>
   </div><div class="addbar"><button class="btn light" data-act="team-add">+ Ajouter une équipe</button></div></main>`;
