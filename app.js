@@ -424,10 +424,11 @@ const EVT = {
 function eventsOf(id) { return S.events.filter(e => e.id === id).sort((a, b) => String(b.at).localeCompare(String(a.at))); }
 function eventsHTML(id) {
   const ev = eventsOf(id);
-  if (!ev.length) return `<p class="muted">Aucune panne ni réparation enregistrée pour l'instant.</p>`;
+  if (!ev.length) return `<p class="muted">Aucune panne, réparation ni prêt enregistré pour l'instant.</p>`;
   const np = ev.filter(e => e.type === "probleme" || e.type === "hs").length, nr = ev.filter(e => e.type === "reparation").length;
   const teams = {}; ev.filter(e => e.type === "probleme" || e.type === "hs").forEach(e => { const k = teamLabel(e.equipe); teams[k] = (teams[k] || 0) + 1; });
-  return `<div class="evsum"><span><b>${np}</b> panne${np > 1 ? "s" : ""}</span><span><b>${nr}</b> réparation${nr > 1 ? "s" : ""}</span></div>
+  const npr = ev.filter(e => e.type === "pret").length;
+  return `<div class="evsum"><span><b>${np}</b> panne${np > 1 ? "s" : ""}</span><span><b>${nr}</b> réparation${nr > 1 ? "s" : ""}</span><span><b>${npr}</b> prêt${npr > 1 ? "s" : ""}</span></div>
     ${Object.keys(teams).length ? `<p class="muted">Pannes par équipe : ${Object.entries(teams).map(([k, v]) => `${esc(k)} (${v})`).join(", ")}</p>` : ""}
     <ul class="evlist">${ev.map(e => {
       const t = EVT[e.type] || { nom: e.type, c: "hs" }, d = new Date(e.at);
@@ -468,7 +469,7 @@ function viewMachine(id) {
     <div class="sect"><h3>Photo</h3><div class="photo" id="photo-box" data-main="${esc(id)}">${m.photo || pendingPhoto(m.id, "main") ? "Chargement de la photo…" : "Pas encore de photo"}</div>
       <label class="btn light" style="text-align:center">📷 ${m.photo ? "Changer la photo" : "Ajouter une photo"}<input type="file" accept="image/*" id="photo-input" hidden></label></div>
 
-    <div class="sect"><h3>Historique des pannes et réparations</h3>${eventsHTML(id)}</div>
+    <div class="sect"><h3>Historique : pannes, réparations, prêts</h3>${eventsHTML(id)}</div>
 
     <div class="sect ${dirty ? "dirty" : ""}"><h3>Infos de la machine</h3><p class="muted" style="margin:0 0 4px">Pour corriger une erreur de saisie. Rien n'est changé tant que tu n'as pas appuyé sur « Enregistrer ».</p>
       <label class="f" for="f-famille">Type de machine</label><select class="inp" id="f-famille" data-field="famille">${famOpts}</select>
