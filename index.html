@@ -13,7 +13,7 @@
   --bg:#eef4ea; --surface:#ffffff; --ink:#1b2a1d; --muted:#5d6e5f; --line:#d7e4d2;
   --green:#2e7d32; --green-dark:#1e5c2a; --green-deep:#143f1d; --leaf:#8cc63f; --leaf-soft:#e3f1d3;
   --s-operationnelle:#13b955; --s-controle:#00b3d6; --s-disponible:#2f7cf6; --s-probleme:#ff3b30; --s-reparation:#ff9500; --s-hs:#2c2c2e;
-  --f-tondeuse:#e0442f; --f-debroussailleuse:#7fb52e; --f-souffleur:#d6247a; --f-taillehaie:#e8c400; --f-tronconneuse:#e8672b;
+  --f-tondeuse:#e0442f; --f-debroussailleuse:#7fb52e; --f-souffleur:#d6247a; --f-taillehaie:#e8c400; --f-tronconneuse:#e8672b; --f-autoportee:#7b4fa8; --f-motoculteur:#8d6e63; --f-scarificateur:#00897b; --f-outillage:#5c6bc0;
   --radius:18px; --shadow:0 2px 10px rgba(20,63,29,.08);
   --safe-b:env(safe-area-inset-bottom,0px);
 }
@@ -179,8 +179,8 @@ body.noscroll{overflow:hidden}
 .filtre{background:#fff;border-radius:12px;padding:10px 14px;margin-bottom:12px;font-size:14px;box-shadow:var(--shadow)}
 .filtre a{color:var(--green);font-weight:700;margin-left:8px}
 /* tuile 5 seule sur sa ligne : en largeur */
-.tiles .tile:nth-child(5):last-child{grid-column:1/-1;flex-direction:row;min-height:0;text-align:left;gap:16px}
-.tiles .tile:nth-child(5):last-child .bar,.tiles .tile:nth-child(5):last-child .dots{display:none}
+.tiles .tile:last-child:nth-child(odd){grid-column:1/-1;flex-direction:row;min-height:0;text-align:left;gap:16px}
+.tiles .tile:last-child:nth-child(odd) .bar,.tiles .tile:last-child:nth-child(odd) .dots{display:none}
 /* bandeau équipes (différent des machines) */
 .teamband,.allband{display:block;margin-top:14px;border-radius:var(--radius);box-shadow:var(--shadow);padding:14px 16px}
 .teamband{background:linear-gradient(135deg,var(--green-dark),var(--green));color:#fff}
@@ -261,8 +261,8 @@ a.evtxt{color:inherit}
 <div id="app"></div>
 <div id="status" class="hidden"><i></i><span id="status-txt">…</span><span class="sp"></span></div>
 <script src="vendor/supabase.js"></script>
-<script src="config.js?v=2"></script>
-<script src="app.js?v=2"></script>
-<script>if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js?v=2");</script>
+<script src="config.js?v=3"></script>
+<script src="app.js?v=3"></script>
+<script>if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js?v=3");</script>
 </body>
 </html>

@@ -1,18 +1,22 @@
 /* ASDJ - Tools : suivi du matériel par famille et par équipe.
    Données partagées entre les comptes connectés (Supabase), copie locale + file d'attente pour le hors ligne. */
 "use strict";
-const APP_V = 2;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
+const APP_V = 3;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
 const CFG = window.APP_CONFIG;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
 /* ---------- référentiels ---------- */
 const FAMILLES = [
-  { id: "tondeuse", nom: "Tondeuses", un: "Tondeuse" },
-  { id: "debroussailleuse", nom: "Débroussailleuses", un: "Débroussailleuse" },
-  { id: "souffleur", nom: "Souffleurs", un: "Souffleur" },
-  { id: "taillehaie", nom: "Taille-haies", un: "Taille-haie" },
-  { id: "tronconneuse", nom: "Tronçonneuses", un: "Tronçonneuse" },
+  { id: "tondeuse", nom: "Tondeuses", un: "Tondeuse", art: "une" },
+  { id: "debroussailleuse", nom: "Débroussailleuses", un: "Débroussailleuse", art: "une" },
+  { id: "souffleur", nom: "Souffleurs", un: "Souffleur", art: "un" },
+  { id: "taillehaie", nom: "Taille-haies", un: "Taille-haie", art: "un" },
+  { id: "tronconneuse", nom: "Tronçonneuses", un: "Tronçonneuse", art: "une" },
+  { id: "autoportee", nom: "Autoportées", un: "Autoportée", art: "une" },
+  { id: "motoculteur", nom: "Motoculteurs", un: "Motoculteur", art: "un" },
+  { id: "scarificateur", nom: "Scarificateurs", un: "Scarificateur", art: "un" },
+  { id: "outillage", nom: "Petit outillage", un: "Outil", art: "un", aide: "visseuses, perceuses, meuleuses…" },
 ];
 const FAM = Object.fromEntries(FAMILLES.map(f => [f.id, f]));
 /* ordre = priorité d'affichage : ce qui demande une action d'abord, le normal à la fin */
@@ -39,6 +43,10 @@ const ICONS = {
   souffleur: `<svg viewBox="0 0 64 64" fill="currentColor"><path fill-rule="evenodd" d="M10 6h14a6 6 0 0 1 6 6v26a6 6 0 0 1-6 6H10a6 6 0 0 1-6-6V12a6 6 0 0 1 6-6zm1 8v3h12v-3zm0 6v3h12v-3zm0 6v3h12v-3z"/><path d="M8 44 6 50M26 44l2 6" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><path d="M28 34c12 0 12 14 26 14" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><rect x="36" y="32" width="5" height="10" rx="2"/><path d="M54 44v8l7-2v-4z"/><path d="M57 38l5-3M58 56l5 3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" opacity=".8"/></svg>`,
   taillehaie: `<svg viewBox="0 0 64 64" fill="currentColor"><g transform="rotate(-38 32 32)"><rect x="1" y="25" width="22" height="14" rx="6"/><path d="M5 26c0-8 6-11 13-8" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="M14 25c0-10 11-10 11 0" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><rect x="22" y="29" width="41" height="6" rx="1.5"/><path d="M26 29l1.6-5 1.6 5z M29 29l1.6-5 1.6 5z M32 29l1.6-5 1.6 5z M35 29l1.6-5 1.6 5z M38 29l1.6-5 1.6 5z M41 29l1.6-5 1.6 5z M44 29l1.6-5 1.6 5z M47 29l1.6-5 1.6 5z M50 29l1.6-5 1.6 5z M53 29l1.6-5 1.6 5z M56 29l1.6-5 1.6 5z M59 29l1.6-5 1.6 5z"/><path d="M26 35l1.6 5 1.6-5z M29 35l1.6 5 1.6-5z M32 35l1.6 5 1.6-5z M35 35l1.6 5 1.6-5z M38 35l1.6 5 1.6-5z M41 35l1.6 5 1.6-5z M44 35l1.6 5 1.6-5z M47 35l1.6 5 1.6-5z M50 35l1.6 5 1.6-5z M53 35l1.6 5 1.6-5z M56 35l1.6 5 1.6-5z M59 35l1.6 5 1.6-5z"/></g></svg>`,
   tronconneuse: `<svg viewBox="0 0 64 64" fill="currentColor"><path d="M8 22h20a5 5 0 0 1 5 5v14a5 5 0 0 1-5 5H10a5 5 0 0 1-5-5V25a3 3 0 0 1 3-3z"/><path d="M11 23c0-9 6-12 14-12h6v11" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/><path d="M5 42H1" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="M33 28h22a6 6 0 0 1 0 12H33z"/><path d="M33 25.5h22a8.5 8.5 0 0 1 0 17H33" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="2.2 2"/></svg>`,
+  autoportee: `<svg viewBox="0 0 64 64" fill="currentColor"><rect x="5" y="34" width="50" height="8" rx="3"/><path d="M36 24h15a5 5 0 0 1 5 5v7H36z"/><path d="M14 22h13v12H12z"/><path d="M14 12v20" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="M37 25 33 14" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/><ellipse cx="32" cy="13" rx="6" ry="2.2"/><path fill-rule="evenodd" d="M6 48a10 10 0 1 0 20 0a10 10 0 1 0-20 0zm6.5 0a3.5 3.5 0 1 0 7 0a3.5 3.5 0 1 0-7 0zM43 50a7 7 0 1 0 14 0a7 7 0 1 0-14 0zm4.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0z"/></svg>`,
+  motoculteur: `<svg viewBox="0 0 64 64" fill="currentColor"><rect x="12" y="22" width="22" height="16" rx="4"/><rect x="16" y="16" width="12" height="7" rx="2"/><path d="M30 26 56 8M52 6l7 4" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="M14 38 8 58" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/><path fill-rule="evenodd" d="M14 48a10 10 0 1 0 20 0a10 10 0 1 0-20 0zm6 0a4 4 0 1 0 8 0a4 4 0 1 0-8 0z"/><path d="M24 35v4M24 57v4M13 48H9M39 48h-4M16 40l-3-3M32 40l3-3M16 56l-3 3M32 56l3 3" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>`,
+  scarificateur: `<svg viewBox="0 0 64 64" fill="currentColor"><path d="M8 40c0-7 5-11 13-11h22c6 0 11 4 11 9v2z"/><rect x="22" y="19" width="15" height="10" rx="3"/><path d="M42 30 52 9M47 9h10" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="M14 41v8M19 41v8M24 41v8M29 41v8M34 41v8M39 41v8M44 41v8M49 41v8" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/><path fill-rule="evenodd" d="M2 44a5 5 0 1 0 10 0a5 5 0 1 0-10 0zm3 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0zM52 44a5 5 0 1 0 10 0a5 5 0 1 0-10 0zm3 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0z"/><path d="M4 58h56" stroke="currentColor" stroke-width="2.5" stroke-dasharray="2 3" opacity=".7"/></svg>`,
+  outillage: `<svg viewBox="0 0 64 64" fill="currentColor"><rect x="6" y="12" width="34" height="16" rx="7"/><rect x="39" y="15" width="9" height="10" rx="2"/><path d="M48 20h12" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/><path d="M14 26h12l4 20H18z"/><rect x="11" y="45" width="24" height="11" rx="3"/><path d="M28 30h6" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>`,
 };
 const SVG = {
   back: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>`,
@@ -366,10 +374,10 @@ function viewFamille(fid, q) {
   } else body = `<div class="list">${list.sort((a, b) => natural(a.id, b.id)).map(cardHTML).join("")}</div>`;
   if (!list.length) body = `<div class="empty">Aucune machine ici.</div>`;
   const retired = off.length ? `<details class="retired"><summary>Machines retirées du parc (${off.length})</summary><div class="list">${off.sort((a, b) => natural(a.id, b.id)).map(cardHTML).join("")}</div></details>` : "";
-  return header(f.nom, `${act.length} machine${act.length > 1 ? "s" : ""}`, { fam: fid }) +
+  return header(f.nom, `${act.length} machine${act.length > 1 ? "s" : ""}${f.aide ? ` · ${f.aide}` : ""}`, { fam: fid }) +
     `<main>${summaryHTML(act, `#/famille/${fid}?`)}<div class="seg"><button data-act="sort" data-v="num" class="${famSort === "num" ? "on" : ""}">Par numéro</button><button data-act="sort" data-v="equipe" class="${famSort === "equipe" ? "on" : ""}">Par équipe</button></div>
     ${sel ? `<div class="filtre">Filtre : <b>${esc(sel === "attribuee" ? "Attribuées" : ST[sel].nom)}</b> <a href="#/famille/${fid}">✕ retirer</a></div>` : ""}${body}
-    <div class="addbar"><button class="btn light" data-act="add" data-fam="${fid}">+ Ajouter une ${esc(f.un.toLowerCase())}</button></div>${retired}</main>`;
+    <div class="addbar"><button class="btn light" data-act="add" data-fam="${fid}">+ Ajouter ${f.art || "une"} ${esc(f.un.toLowerCase())}</button></div>${retired}</main>`;
 }
 
 function teamCard(n, all) {
@@ -556,7 +564,7 @@ function viewAjout(fid) {
   const f = FAM[fid] || FAMILLES[0];
   const teamOpts = `<option value="">Sans équipe (au dépôt)</option>` + teamNums().map(n => `<option value="${n}">${esc(teamLabel(n))}</option>`).join("");
   return header(`Ajouter : ${f.un}`, "Nouvelle machine", { fam: f.id }) + `<main><div class="sect">
-    <label class="f" for="a-num" style="margin-top:0">Numéro interne (ex. : T14)</label><input class="inp" id="a-num" autocapitalize="characters" autocomplete="off">
+    <label class="f" for="a-num" style="margin-top:0">Numéro interne (ex. : ${({ tondeuse: "T14", debroussailleuse: "D08", souffleur: "S08", taillehaie: "TH08", tronconneuse: "TR11", autoportee: "A01", motoculteur: "MC01", scarificateur: "SC01", outillage: "OU01" })[f.id] || "X01"})</label><input class="inp" id="a-num" autocapitalize="characters" autocomplete="off">
     <label class="f" for="a-mod">Modèle (ex. : HRX 537)</label><input class="inp" id="a-mod" autocomplete="off">
     <label class="f" for="a-eq">Équipe</label><select class="inp" id="a-eq">${teamOpts}</select>
     <div id="a-msg"></div><div style="height:14px"></div>
