@@ -248,6 +248,11 @@ details.journal summary::after{content:" ▾";color:var(--muted)}
 .evm{display:flex;align-items:center;gap:6px;font-size:15px}
 .evic svg{width:20px;height:20px}
 a.evtxt{color:inherit}
+.reps{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+.repc{border:2px solid var(--line);background:#fff;border-radius:12px;padding:11px 14px;font-weight:700;font-size:15px;cursor:pointer}
+.repc.on{background:var(--s-reparation);border-color:var(--s-reparation);color:#fff}
+.repc.plus{color:var(--muted);font-weight:600}
+.repc.plus.on{background:#fff3e0;color:#9a5a00;border-color:var(--s-reparation)}
 </style>
 </head>
 <body>
@@ -256,8 +261,8 @@ a.evtxt{color:inherit}
 <div id="app"></div>
 <div id="status" class="hidden"><i></i><span id="status-txt">…</span><span class="sp"></span></div>
 <script src="vendor/supabase.js"></script>
-<script src="config.js?v=1"></script>
-<script src="app.js?v=1"></script>
-<script>if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js?v=1");</script>
+<script src="config.js?v=2"></script>
+<script src="app.js?v=2"></script>
+<script>if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js?v=2");</script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 /* ASDJ - Tools : suivi du matériel par famille et par équipe.
    Données partagées entre les comptes connectés (Supabase), copie locale + file d'attente pour le hors ligne. */
 "use strict";
-const APP_V = 1;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
+const APP_V = 2;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
 const CFG = window.APP_CONFIG;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -83,6 +83,15 @@ const actives = () => Object.values(S.machines).filter(m => m.actif !== false);
 const teamNums = () => Object.keys(S.equipes).map(Number).sort((a, b) => a - b);
 const myName = () => (USER && USER.user_metadata && USER.user_metadata.nom) || "";
 const NOMS = () => [...new Set(["Cyril", "Nico", myName(), ...Object.values(S.equipes).map(e => e.chef)].filter(Boolean))];
+/* réparateurs habituels (+ ceux déjà saisis à la main) */
+const REPARATEURS = ["Cyril Motoculture", "NETP"];
+const repList = () => [...new Set([...REPARATEURS, ...Object.values(S.machines).map(m => m.reparateur), ...S.events.map(e => e.reparateur)].filter(Boolean).map(x => x.trim()))];
+function repPicker(id, cur, field) {
+  const list = repList(), other = !!cur && !list.includes(cur);
+  return `<div class="reps" data-for="${id}">${list.map(r => `<button type="button" class="repc ${cur === r ? "on" : ""}" data-act="rep-pick" data-v="${esc(r)}">${esc(r)}</button>`).join("")}
+    <button type="button" class="repc plus ${other ? "on" : ""}" data-act="rep-other">+ Autre</button></div>
+    <input class="inp ${other ? "" : "hidden"}" id="${id}" ${field ? `data-field="${field}"` : ""} value="${esc(cur || "")}" placeholder="Nom du réparateur" autocomplete="off">`;
+}
 const statMatch = (m, sel) => !sel || (sel === "attribuee" ? ATTRIB.includes(m.statut) : m.statut === sel);
 function whereTxt(m) {
   if (m.statut === "reparation" || m.lieu === "reparateur") return `Chez ${m.reparateur || "le réparateur"}` + ((m.depose_le || m.depuis) ? ` · ${sinceTxt(m.depose_le || m.depuis)}` : "") + (m.depose_par ? ` · déposée par ${m.depose_par}` : "");
@@ -503,7 +512,7 @@ function viewMachine(id) {
       <label class="f" for="f-equipe">Équipe responsable</label><select class="inp" id="f-equipe" data-field="equipe">${teamOpts}</select>
       <label class="f">Où est-elle ?</label><div class="where3">${Object.entries(LIEUX).map(([k, v]) => `<button class="${lieu === k ? "on" : ""}" data-act="lieu" data-v="${k}">${esc(v)}</button>`).join("")}</div>
       <div class="two"><div>${inp("pret_a", "Prêtée à", "text", "Nom", "noms")}</div><div>${inp("pret_le", "Prêtée le", "date")}</div></div>
-      ${inp("reparateur", "Réparateur (entreprise)", "text", "Ex. : Motoculture Dupont")}
+      <label class="f">Réparateur</label>${repPicker("f-reparateur", dv(m, "reparateur"), "reparateur")}
       <div class="two"><div>${inp("depose_par", "Déposée par", "text", "Nom", "noms")}</div><div>${inp("depose_le", "Déposée le", "date")}</div></div>
       <div class="two"><div>${inp("recupere_par", "Récupérée par", "text", "Nom", "noms")}</div><div>${inp("recupere_le", "Récupérée le", "date")}</div></div>
       ${inp("depuis", "Dans cet état depuis le", "date")}
@@ -593,7 +602,7 @@ function askStatut(id, v) {
   const nomsList = `<datalist id="m-noms">${NOMS().map(n => `<option value="${esc(n)}">`).join("")}</datalist>`;
   let html = `<p class="mq">Es-tu sûr que <b>${esc(m.id)}</b> (${esc(m.modele)}) <b style="color:${sc(v)}">${esc(s.q)}</b> ?</p>`;
   if (v === "probleme" || v === "hs") html += `<label class="f" for="m-motif">Quel est le problème ?</label><textarea class="inp" id="m-motif" placeholder="Ex. : ne démarre plus, lame cassée…">${esc(m.motif)}</textarea>${photoField("Photo du problème")}`;
-  if (v === "reparation") html += `<label class="f" for="m-rep">Chez quel réparateur ?</label><input class="inp" id="m-rep" value="${esc(m.reparateur)}" placeholder="Ex. : Motoculture Dupont">
+  if (v === "reparation") html += `<label class="f">Chez quel réparateur ?</label>${repPicker("m-rep", m.reparateur)}
     <div class="two"><div><label class="f" for="m-dpar">Déposée par</label><input class="inp" id="m-dpar" list="m-noms" value="${esc(myName())}"></div><div><label class="f" for="m-dle">Le</label><input class="inp" id="m-dle" type="date" value="${today()}"></div></div>
     <label class="f" for="m-motif">Pourquoi ?</label><textarea class="inp" id="m-motif">${esc(m.motif)}</textarea>${photoField("Photo des pièces confiées au réparateur")}${nomsList}`;
   if (leavingRep) html += `<div class="mnote">Elle revient de chez ${esc(m.reparateur || "le réparateur")}.</div><div class="two"><div><label class="f" for="m-rpar">Récupérée par</label><input class="inp" id="m-rpar" list="m-noms" value="${esc(myName())}"></div><div><label class="f" for="m-rle">Le</label><input class="inp" id="m-rle" type="date" value="${today()}"></div></div>${nomsList}`;
@@ -701,6 +710,15 @@ document.addEventListener("click", async e => {
     return;
   }
   const id = r.parts[0] === "machine" ? r.parts[1] : null;
+  if (act === "rep-pick" || act === "rep-other") {
+    const box = t.closest(".reps"), input = document.getElementById(box.dataset.for);
+    box.querySelectorAll(".repc").forEach(b => b.classList.toggle("on", b === t));
+    if (act === "rep-pick") { input.value = t.dataset.v; input.classList.add("hidden"); }
+    else { input.value = ""; input.classList.remove("hidden"); input.focus(); }
+    if (input.dataset.field && id) draftSet(id, "reparateur", input.value.trim());
+    const mm = $("#m-msg"); if (mm) mm.innerHTML = "";
+    return;
+  }
   if (act === "statut" && id) return askStatut(id, t.dataset.v);
   if (act === "pret" && id) return askPret(id);
   if (act === "lieu" && id) { draftSet(id, "lieu", t.dataset.v); render(false); return; }
