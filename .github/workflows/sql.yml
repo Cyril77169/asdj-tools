@@ -1,0 +1,20 @@
+# Robot « Modifier la base » : lance sql/a-lancer.sql sur le projet Supabase de Cyril
+# via l'API de gestion Supabase (secret SUPABASE_ACCESS_TOKEN). Lancé à la main par Claude.
+name: Modifier la base
+on:
+  workflow_dispatch:
+jobs:
+  sql:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lancer le SQL
+        env:
+          TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          REF: qrqccrlxuugwehugbgjb
+        run: |
+          BODY=$(python3 -c 'import json;print(json.dumps({"query":open("sql/a-lancer.sql").read()}))')
+          CODE=$(curl -s -o out.json -w "%{http_code}" -X POST "https://api.supabase.com/v1/projects/$REF/database/query" \
+            -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$BODY")
+          echo "Réponse HTTP $CODE"; cat out.json; echo
+          test "$CODE" -ge 200 -a "$CODE" -lt 300
