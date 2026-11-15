@@ -1,0 +1,17 @@
+{
+ "name": "ASDJ - Tools",
+ "short_name": "ASDJ Tools",
+ "description": "Suivi du matériel ASDJ - Au service des jardins",
+ "lang": "fr",
+ "start_url": "./",
+ "scope": "./",
+ "display": "standalone",
+ "orientation": "portrait",
+ "background_color": "#1e5c2a",
+ "theme_color": "#1e5c2a",
+ "icons": [
+  {"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
+  {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
+  {"src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+ ]
+}

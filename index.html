@@ -1,3 +1,168 @@
-<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ASDJ - Tools</title>
-<style>body{font-family:system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;margin:0;background:#f4f7f2;color:#2d4a2b}h1{margin:0 0 .3em}</style></head>
-<body><div style="text-align:center"><h1>ASDJ - Tools</h1><p>Appli en construction 🌱</p></div></body></html>
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>ASDJ - Tools</title>
+<meta name="theme-color" content="#1e5c2a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<style>
+:root{
+  --bg:#eef4ea; --surface:#ffffff; --ink:#1b2a1d; --muted:#5d6e5f; --line:#d7e4d2;
+  --green:#2e7d32; --green-dark:#1e5c2a; --green-deep:#143f1d; --leaf:#8cc63f; --leaf-soft:#e3f1d3;
+  --s-operationnelle:#13b955; --s-controle:#00b3d6; --s-disponible:#2f7cf6; --s-probleme:#ff9500; --s-reparation:#ff3b30; --s-hs:#2c2c2e;
+  --f-tondeuse:#e0442f; --f-debroussailleuse:#7fb52e; --f-souffleur:#d6247a; --f-taillehaie:#e8c400; --f-tronconneuse:#e8672b;
+  --radius:18px; --shadow:0 2px 10px rgba(20,63,29,.08);
+  --safe-b:env(safe-area-inset-bottom,0px);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:16px}
+body{min-height:100vh;padding-bottom:calc(64px + var(--safe-b))}
+button,input,select,textarea{font:inherit;color:inherit}
+a{color:inherit;text-decoration:none}
+.hidden{display:none!important}
+
+/* ---------- écran de chargement ---------- */
+#loader{position:fixed;inset:0;z-index:50;background:linear-gradient(160deg,var(--green-dark),var(--green-deep));color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;transition:opacity .35s}
+#loader.fade{opacity:0;pointer-events:none}
+#loader img{width:96px;height:96px;border-radius:22px;box-shadow:0 8px 30px rgba(0,0,0,.3)}
+#loader h1{margin:0;font-size:28px;letter-spacing:.5px}
+#loader p{margin:0;opacity:.85}
+.spin{width:28px;height:28px;border:3px solid rgba(255,255,255,.3);border-top-color:var(--leaf);border-radius:50%;animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+/* ---------- en-tête ---------- */
+header.top{position:sticky;top:0;z-index:10;background:linear-gradient(135deg,var(--green-dark),var(--green));color:#fff;padding:14px 16px 16px;box-shadow:0 2px 12px rgba(0,0,0,.15)}
+header.top .row{display:flex;align-items:center;gap:12px}
+header.top h1{margin:0;font-size:21px;line-height:1.15;flex:1;min-width:0}
+header.top h1 small{display:block;font-size:13px;font-weight:500;opacity:.8}
+.iconbtn{width:42px;height:42px;border-radius:50%;border:0;background:rgba(255,255,255,.16);color:#fff;display:grid;place-items:center;flex:none;cursor:pointer}
+.iconbtn svg{width:22px;height:22px}
+.logo{width:42px;height:42px;border-radius:12px;flex:none}
+.hfam{width:42px;height:42px;border-radius:50%;display:grid;place-items:center;flex:none;background:#fff}
+.hfam svg{width:28px;height:28px}
+
+main{padding:16px;max-width:760px;margin:0 auto}
+.banner{margin:12px 16px 0;padding:12px 14px;border-radius:14px;background:#fff3cd;color:#6b4e00;border:1px solid #f3d27a;font-weight:600;font-size:15px}
+.banner.red{background:#ffe1df;color:#8a1c14;border-color:#f5a39d}
+
+/* ---------- alertes accueil ---------- */
+.alerts{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.alert{display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:999px;color:#fff;font-weight:700;font-size:15px;box-shadow:var(--shadow)}
+.alert b{font-size:18px}
+.allgood{background:var(--leaf-soft);color:var(--green-dark);padding:12px 14px;border-radius:14px;font-weight:600;margin-bottom:14px}
+
+/* ---------- tuiles familles ---------- */
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.tile{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 14px 14px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:8px;border:2px solid transparent;cursor:pointer;min-height:178px}
+.tile:active{transform:scale(.98)}
+.tile .ic{width:78px;height:78px;border-radius:50%;display:grid;place-items:center;color:#fff}
+.tile .ic svg{width:50px;height:50px}
+.tile h2{margin:2px 0 0;font-size:17px;line-height:1.15}
+.tile .n{color:var(--muted);font-size:14px}
+.tile.wide{grid-column:1/-1;flex-direction:row;min-height:0;text-align:left;padding:14px 16px}
+.tile.wide .ic{width:56px;height:56px;background:var(--green)}
+.tile.wide .ic svg{width:32px;height:32px}
+.tile.wide .txt{flex:1}
+.bar{display:flex;height:10px;border-radius:6px;overflow:hidden;width:100%;background:var(--line)}
+.bar i{display:block;height:100%}
+.dots{display:flex;gap:6px;flex-wrap:wrap;justify-content:center}
+.dot{display:inline-flex;align-items:center;gap:4px;font-size:13px;font-weight:700}
+.dot::before{content:"";width:11px;height:11px;border-radius:50%;background:var(--c)}
+
+/* ---------- filtres ---------- */
+.chips{display:flex;gap:8px;overflow-x:auto;padding:2px 0 12px;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chip{flex:none;border:2px solid var(--line);background:#fff;border-radius:999px;padding:8px 14px;font-weight:600;font-size:14px;cursor:pointer;display:flex;align-items:center;gap:6px}
+.chip .sw{width:12px;height:12px;border-radius:50%}
+.chip.on{border-color:var(--green-dark);background:var(--green-dark);color:#fff}
+.seg{display:flex;background:#fff;border-radius:12px;padding:4px;gap:4px;margin-bottom:12px;box-shadow:var(--shadow)}
+.seg button{flex:1;border:0;background:none;padding:9px 6px;border-radius:9px;font-weight:600;font-size:14px;cursor:pointer;color:var(--muted)}
+.seg button.on{background:var(--leaf-soft);color:var(--green-dark)}
+.search{width:100%;padding:13px 16px;border-radius:14px;border:2px solid var(--line);background:#fff;margin-bottom:12px;font-size:16px}
+
+/* ---------- liste machines ---------- */
+.group-h{margin:18px 2px 8px;font-size:14px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:var(--green-dark);display:flex;align-items:center;gap:8px}
+.group-h:first-child{margin-top:4px}
+.group-h svg{width:20px;height:20px}
+.list{display:flex;flex-direction:column;gap:10px}
+.card{background:var(--surface);border-radius:16px;box-shadow:var(--shadow);display:flex;align-items:stretch;overflow:hidden;cursor:pointer}
+.card:active{transform:scale(.99)}
+.card .stripe{width:10px;flex:none;background:var(--c)}
+.card .body{flex:1;padding:12px 12px;min-width:0}
+.card .num{font-size:20px;font-weight:800;letter-spacing:.3px}
+.card .mod{color:var(--muted);font-weight:600;margin-left:6px;font-size:15px}
+.card .where{font-size:14px;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card .side{display:flex;align-items:center;padding-right:12px}
+.pill{display:inline-block;padding:7px 11px;border-radius:999px;background:var(--c);color:#fff;font-weight:800;font-size:13px;white-space:nowrap}
+.card.off{opacity:.6}
+.empty{color:var(--muted);text-align:center;padding:30px 10px}
+details.retired{margin-top:18px}
+details.retired summary{cursor:pointer;color:var(--muted);font-weight:700;padding:8px 2px}
+
+/* ---------- fiche machine ---------- */
+.hero{border-radius:22px;color:#fff;padding:18px 18px 16px;background:var(--c);box-shadow:0 6px 20px rgba(0,0,0,.12);margin-bottom:16px;position:relative;overflow:hidden}
+.hero .big{font-size:38px;font-weight:900;line-height:1}
+.hero .mod{font-size:18px;font-weight:700;opacity:.95;margin-top:4px}
+.hero .st{margin-top:12px;font-size:20px;font-weight:800}
+.hero .since{opacity:.92;font-weight:600;margin-top:2px}
+.hero .fam{position:absolute;right:14px;top:14px;width:60px;height:60px;border-radius:50%;background:rgba(255,255,255,.22);display:grid;place-items:center}
+.hero .fam svg{width:40px;height:40px}
+.sect{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px;margin-bottom:14px}
+.sect h3{margin:0 0 10px;font-size:15px;text-transform:uppercase;letter-spacing:.5px;color:var(--green-dark)}
+.stgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.stbtn{border:3px solid transparent;border-radius:14px;padding:14px 8px;font-weight:800;font-size:15px;color:#fff;background:var(--c);cursor:pointer;opacity:.55;min-height:56px}
+.stbtn.on{opacity:1;border-color:var(--ink);box-shadow:0 4px 14px rgba(0,0,0,.18)}
+.where3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+.where3 button{border:2px solid var(--line);background:#fff;border-radius:12px;padding:12px 4px;font-weight:700;font-size:14px;cursor:pointer}
+.where3 button.on{background:var(--green-dark);border-color:var(--green-dark);color:#fff}
+label.f{display:block;font-weight:700;font-size:14px;margin:12px 0 6px;color:var(--muted)}
+.inp{width:100%;padding:12px 14px;border-radius:12px;border:2px solid var(--line);background:#fbfdfa;font-size:16px}
+.inp:focus{outline:none;border-color:var(--green)}
+textarea.inp{min-height:70px;resize:vertical}
+.hist{list-style:none;margin:0;padding:0}
+.hist li{padding:9px 0;border-bottom:1px solid var(--line);font-size:14px}
+.hist li:last-child{border-bottom:0}
+.hist time{display:block;color:var(--muted);font-size:12px;font-weight:600}
+.btn{display:block;width:100%;border:0;border-radius:14px;padding:15px;font-weight:800;font-size:16px;background:var(--green-dark);color:#fff;cursor:pointer}
+.btn.light{background:var(--leaf-soft);color:var(--green-dark)}
+.btn.danger{background:#ffe1df;color:#8a1c14}
+.fab{position:fixed;right:18px;bottom:calc(78px + var(--safe-b));width:60px;height:60px;border-radius:50%;border:0;background:var(--green-dark);color:#fff;font-size:32px;box-shadow:0 6px 18px rgba(0,0,0,.25);cursor:pointer;z-index:9}
+.team{display:flex;align-items:center;gap:12px}
+.team .badge{width:46px;height:46px;border-radius:14px;background:var(--green-dark);color:#fff;display:grid;place-items:center;font-weight:900;font-size:20px;flex:none}
+.team .badge.depot{background:var(--s-disponible)}
+
+/* ---------- connexion ---------- */
+.login{max-width:420px;margin:0 auto;padding:30px 20px}
+.login .brand{text-align:center;margin-bottom:24px}
+.login .brand img{width:88px;height:88px;border-radius:22px}
+.login h1{margin:10px 0 2px;color:var(--green-dark)}
+.login p.sub{margin:0;color:var(--muted)}
+.msg{margin-top:12px;padding:12px;border-radius:12px;background:var(--leaf-soft);color:var(--green-dark);font-weight:600}
+.msg.err{background:#ffe1df;color:#8a1c14}
+.link{background:none;border:0;color:var(--green);font-weight:700;margin-top:14px;cursor:pointer;width:100%;padding:10px}
+
+/* ---------- barre d'état en bas ---------- */
+#status{position:fixed;left:0;right:0;bottom:0;z-index:20;background:#fff;border-top:1px solid var(--line);padding:10px 16px calc(10px + var(--safe-b));display:flex;align-items:center;gap:10px;font-size:14px;font-weight:600;color:var(--muted)}
+#status i{width:11px;height:11px;border-radius:50%;background:var(--s-operationnelle);flex:none}
+#status.busy i{background:var(--s-controle);animation:pulse 1s infinite}
+#status.off i{background:var(--s-probleme)}
+#status.err i{background:var(--s-reparation)}
+@keyframes pulse{50%{opacity:.3}}
+#status .sp{flex:1}
+#status button{border:0;background:none;color:var(--green);font-weight:700;cursor:pointer;padding:4px}
+</style>
+</head>
+<body>
+<div id="loader"><img src="icons/icon-192.png" alt=""><h1>ASDJ - Tools</h1><div class="spin"></div><p id="loader-msg">Synchronisation en cours…</p></div>
+<div id="banner"></div>
+<div id="app"></div>
+<div id="status" class="hidden"><i></i><span id="status-txt">…</span><span class="sp"></span></div>
+<script src="vendor/supabase.js"></script>
+<script src="config.js?v=1"></script>
+<script src="app.js?v=1"></script>
+<script>if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js?v=1");</script>
+</body>
+</html>
