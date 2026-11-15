@@ -27,13 +27,13 @@ const LIEUX = { depot: "Au dépôt", equipe: "Avec l'équipe", reparateur: "Chez
 const sc = id => `var(--s-${id})`;
 const fc = id => `var(--f-${id})`;
 
-/* Pictos des familles (dessins maison, trait blanc) */
+/* Pictos des familles (dessins maison, silhouettes pleines) */
 const ICONS = {
-  tondeuse: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M31 24 41 6h5"/><path d="M11 24c0-6 4-9 9-9s9 3 9 9"/><rect x="5" y="24" width="30" height="8" rx="3"/><circle cx="11" cy="37" r="4"/><circle cx="30" cy="37" r="4"/><path d="M4 45h40" stroke-dasharray="2 4"/></svg>`,
-  debroussailleuse: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="39" cy="9" r="5"/><path d="M35 13 11 37"/><path d="M19 22l10 10M17 24l-3 3M31 30l-3 3"/><ellipse cx="9" cy="40" rx="7" ry="3"/><path d="M2 44l3-2M16 44l-3-2"/></svg>`,
-  souffleur: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="6" width="17" height="24" rx="5"/><path d="M9 12h7M9 18h7"/><path d="M20 26c9 0 9 12 18 12"/><path d="M38 34v8"/><path d="M42 32h4M42 38h5M42 44h4"/></svg>`,
-  taillehaie: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="19" width="15" height="11" rx="4"/><path d="M8 19c0-6 3-9 9-9h2v9"/><rect x="18" y="21" width="27" height="6" rx="2"/><path d="M22 21v-3M27 21v-3M32 21v-3M37 21v-3M42 21v-3M22 27v3M27 27v3M32 27v3M37 27v3M42 27v3"/></svg>`,
-  tronconneuse: `<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="18" width="18" height="15" rx="4"/><path d="M7 18c0-6 3-9 8-9h6v9"/><path d="M21 21h20a4.5 4.5 0 0 1 0 9H21"/><path d="M25 21v-2M30 21v-2M35 21v-2M40 21v-2M25 30v2M30 30v2M35 30v2M40 30v2"/></svg>`,
+  tondeuse: `<svg viewBox="0 0 64 64" fill="currentColor"><path d="M4 31 17 25l4 15-13 2z" opacity=".75"/><path d="M15 40c0-8 6-13 15-13h16c6 0 11 4 11 10v3z"/><rect x="29" y="17" width="16" height="10" rx="3"/><rect x="33" y="13" width="7" height="5" rx="1.5"/><path d="M23 28 11 8" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="M6 8h10" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path fill-rule="evenodd" d="M15 46a7 7 0 1 0 14 0a7 7 0 1 0-14 0zm4.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0zM43 46a7 7 0 1 0 14 0a7 7 0 1 0-14 0zm4.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0z"/><path d="M4 58h56" stroke="currentColor" stroke-width="2.5" stroke-dasharray="3 3" opacity=".7"/></svg>`,
+  debroussailleuse: `<svg viewBox="0 0 64 64" fill="currentColor"><rect x="44" y="3" width="16" height="13" rx="4" transform="rotate(45 52 9.5)"/><path d="M46 17 13 50" fill="none" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/><path d="M21 24 37 40" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/><circle cx="20" cy="23" r="3.5"/><circle cx="38" cy="41" r="3.5"/><path d="M2 49a12 8 0 0 1 21-4l-5 6z" opacity=".75"/><ellipse cx="12" cy="53" rx="7" ry="3"/><path d="M3 59l5-4M21 59l-5-4M12 61v-5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`,
+  souffleur: `<svg viewBox="0 0 64 64" fill="currentColor"><path fill-rule="evenodd" d="M10 6h14a6 6 0 0 1 6 6v26a6 6 0 0 1-6 6H10a6 6 0 0 1-6-6V12a6 6 0 0 1 6-6zm1 8v3h12v-3zm0 6v3h12v-3zm0 6v3h12v-3z"/><path d="M8 44 6 50M26 44l2 6" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><path d="M28 34c12 0 12 14 26 14" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><rect x="36" y="32" width="5" height="10" rx="2"/><path d="M54 44v8l7-2v-4z"/><path d="M57 38l5-3M58 56l5 3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" opacity=".8"/></svg>`,
+  taillehaie: `<svg viewBox="0 0 64 64" fill="currentColor"><rect x="3" y="24" width="23" height="16" rx="6"/><path d="M6 26c0-9 7-13 16-9" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="M15 24c0-11 13-11 13 0" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><rect x="24" y="29" width="37" height="6" rx="2"/><path d="M25 29l2-4 2 4z M29 29l2-4 2 4z M33 29l2-4 2 4z M37 29l2-4 2 4z M41 29l2-4 2 4z M45 29l2-4 2 4z M49 29l2-4 2 4z M53 29l2-4 2 4z M57 29l2-4 2 4z"/><path d="M25 35l2 4 2-4z M29 35l2 4 2-4z M33 35l2 4 2-4z M37 35l2 4 2-4z M41 35l2 4 2-4z M45 35l2 4 2-4z M49 35l2 4 2-4z M53 35l2 4 2-4z M57 35l2 4 2-4z"/></svg>`,
+  tronconneuse: `<svg viewBox="0 0 64 64" fill="currentColor"><path d="M8 22h20a5 5 0 0 1 5 5v14a5 5 0 0 1-5 5H10a5 5 0 0 1-5-5V25a3 3 0 0 1 3-3z"/><path d="M11 23c0-9 6-12 14-12h6v11" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/><path d="M5 42H1" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="M33 28h22a6 6 0 0 1 0 12H33z"/><path d="M33 25.5h22a8.5 8.5 0 0 1 0 17H33" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="2.2 2"/></svg>`,
 };
 const SVG = {
   back: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>`,
@@ -70,6 +70,10 @@ const sinceTxt = iso => { const n = daysSince(iso); if (n == null) return ""; re
 const chef = n => (S.equipes[n] && S.equipes[n].chef) || "";
 const teamLabel = n => n == null ? "Sans équipe" : `Équipe ${n}` + (chef(n) ? ` · ${chef(n)}` : "");
 const natural = (a, b) => a.localeCompare(b, "fr", { numeric: true });
+const norm = t => String(t ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const PRIO = { reparation: 0, probleme: 1, hs: 2 };
+const prio = m => PRIO[m.statut] ?? 9;
+const byAlert = (a, b) => prio(a) - prio(b) || natural(a.id, b.id);
 const actives = () => Object.values(S.machines).filter(m => m.actif !== false);
 function whereTxt(m) {
   if (m.statut === "reparation" || m.lieu === "reparateur") return `Chez ${m.reparateur || "le réparateur"}` + (m.depuis ? ` · ${sinceTxt(m.depuis)}` : "");
@@ -260,8 +264,8 @@ function viewHome() {
       <h2>${esc(f.nom)}</h2><span class="n">${l.length} machine${l.length > 1 ? "s" : ""}</span>${barHTML(l)}${dotsHTML(l, ["probleme", "reparation", "hs"])}</a>`;
   }).join("");
   return header("ASDJ - Tools", "Au service des jardins", { home: true, right: `<button class="iconbtn" data-act="logout" aria-label="Se déconnecter">${SVG.out}</button>` }) +
-    `<main>${alerts}<div class="tiles">${tiles}
-      <a class="tile wide" href="#/equipes"><span class="ic">${SVG.team}</span><span class="txt"><h2>Par équipe</h2><span class="n">Le matériel de chaque chef d'équipe</span></span></a>
+    `<main><input class="search" id="home-search" type="search" placeholder="🔍 Code, modèle, chef, type de machine…" autocomplete="off">${alerts}<div class="tiles">${tiles}
+      <a class="tile" href="#/equipes"><span class="ic" style="background:var(--green)">${SVG.team}</span><h2>Par équipe</h2><span class="n">${Object.keys(S.equipes).length} équipes</span>${barHTML(all)}</a>
       <a class="tile wide" href="#/tout"><span class="ic">${SVG.list}</span><span class="txt"><h2>Toutes les machines</h2><span class="n">${all.length} machines · recherche</span></span></a>
     </div></main>`;
 }
@@ -311,8 +315,9 @@ function viewEquipe(id, q) {
   const all = actives().filter(m => isDep ? m.equipe == null : m.equipe === n);
   const sel = q.get("statut");
   const list = all.filter(m => !sel || m.statut === sel);
-  const body = FAMILLES.map(f => {
-    const l = list.filter(m => m.famille === f.id).sort((a, b) => natural(a.id, b.id));
+  const fams = FAMILLES.map(f => ({ f, l: list.filter(m => m.famille === f.id).sort(byAlert) }))
+    .sort((x, y) => (x.l.length ? prio(x.l[0]) : 99) - (y.l.length ? prio(y.l[0]) : 99));
+  const body = fams.map(({ f, l }) => {
     return l.length ? `<div class="group-h"><span style="color:${fc(f.id)}">${ICONS[f.id]}</span>${esc(f.nom)} · ${l.length}</div><div class="list">${l.map(cardHTML).join("")}</div>` : "";
   }).join("") || `<div class="empty">Aucune machine ici.</div>`;
   const edit = isDep ? "" : `<button class="iconbtn" data-act="chef" data-n="${n}" aria-label="Changer le chef">✎</button>`;
@@ -320,13 +325,13 @@ function viewEquipe(id, q) {
     `<main>${statusChips(all, sel, `#/equipe/${id}`)}${body}</main>`;
 }
 function viewTout(q) {
-  const sel = q.get("statut"), txt = (q.get("q") || "").trim().toLowerCase();
+  const sel = q.get("statut"), txt = norm((q.get("q") || "").trim());
   const all = actives();
   const list = all.filter(m => (!sel || m.statut === sel) &&
-    (!txt || [m.id, m.modele, FAM[m.famille] && FAM[m.famille].un, chef(m.equipe), m.reparateur, m.notes, m.motif].join(" ").toLowerCase().includes(txt)))
-    .sort((a, b) => natural(a.id, b.id));
+    (!txt || txt.split(/\s+/).every(w => norm([m.id, m.modele, m.modele.replace(/\s+/g, ""), FAM[m.famille] && FAM[m.famille].un, FAM[m.famille] && FAM[m.famille].nom, chef(m.equipe), m.equipe != null ? `equipe ${m.equipe}` : "sans equipe", ST[m.statut] && ST[m.statut].nom, LIEUX[m.lieu], m.reparateur, m.notes, m.motif].join(" ")).includes(w))))
+    .sort(byAlert);
   return header("Toutes les machines", `${all.length} machines`) +
-    `<main><input class="search" id="search" type="search" placeholder="Chercher : T01, HRX, Nico, réparateur…" value="${esc(q.get("q") || "")}">
+    `<main><input class="search" id="search" type="search" placeholder="🔍 Code, modèle, chef, type de machine…" autocomplete="off" value="${esc(q.get("q") || "")}">
     ${statusChips(all, sel, `#/tout${txt ? `?q=${encodeURIComponent(txt)}` : ""}`)}
     <div class="list">${list.map(cardHTML).join("") || `<div class="empty">Aucune machine trouvée.</div>`}</div></main>`;
 }
@@ -416,7 +421,7 @@ function viewChef(n) {
 }
 
 /* rendu principal (garde la position de défilement de chaque écran) */
-let pendingRender = false;
+let pendingRender = false, focusSearch = false;
 function render(nav) {
   if (!USER) return;
   const r = parseRoute(); current = r.key; const [a, b] = r.parts;
@@ -434,7 +439,7 @@ function render(nav) {
   $("#app").innerHTML = html;
   window.scrollTo(0, y);
   if (a === "machine" && nav) loadHist(b);
-  if (a === "tout") { const s = $("#search"); if (s && document.activeElement !== s && nav === "search") s.focus(); }
+  if (a === "tout" && focusSearch) { focusSearch = false; const s = $("#search"); if (s) { s.focus(); const n = s.value.length; try { s.setSelectionRange(n, n); } catch (_) {} } }
   pendingRender = false;
 }
 /* nouvelles données : on rafraîchit sans déranger quelqu'un en train d'écrire */
@@ -507,6 +512,7 @@ document.addEventListener("change", e => {
 document.addEventListener("focusout", () => { setTimeout(() => { if (pendingRender && !/INPUT|TEXTAREA|SELECT/.test((document.activeElement || {}).tagName || "")) softRender(); }, 100); });
 let searchT = null;
 document.addEventListener("input", e => {
+  if (e.target.id === "home-search") { const v = e.target.value.trim(); if (v) { focusSearch = true; go(`#/tout?q=${encodeURIComponent(v)}`); } return; }
   if (e.target.id !== "search") return;
   clearTimeout(searchT);
   searchT = setTimeout(() => {
