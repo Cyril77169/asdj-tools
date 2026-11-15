@@ -14,14 +14,16 @@ const FAMILLES = [
   { id: "tronconneuse", nom: "Tronçonneuses", un: "Tronçonneuse" },
 ];
 const FAM = Object.fromEntries(FAMILLES.map(f => [f.id, f]));
+/* ordre = priorité d'affichage : ce qui demande une action d'abord, le normal à la fin */
 const STATUTS = [
-  { id: "operationnelle", nom: "Opérationnelle" },
-  { id: "controle", nom: "Contrôle fait" },
-  { id: "disponible", nom: "Disponible" },
   { id: "probleme", nom: "Problème technique" },
   { id: "reparation", nom: "En réparation" },
   { id: "hs", nom: "HS" },
+  { id: "disponible", nom: "Disponible" },
+  { id: "controle", nom: "Contrôle fait" },
+  { id: "operationnelle", nom: "Opérationnelle" },
 ];
+const URGENTS = ["probleme", "reparation", "hs"];
 const ST = Object.fromEntries(STATUTS.map(s => [s.id, s]));
 const LIEUX = { depot: "Au dépôt", equipe: "Avec l'équipe", reparateur: "Chez le réparateur" };
 const sc = id => `var(--s-${id})`;
@@ -71,12 +73,13 @@ const chef = n => (S.equipes[n] && S.equipes[n].chef) || "";
 const teamLabel = n => n == null ? "Sans équipe" : `Équipe ${n}` + (chef(n) ? ` · ${chef(n)}` : "");
 const natural = (a, b) => a.localeCompare(b, "fr", { numeric: true });
 const norm = t => String(t ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-const PRIO = { reparation: 0, probleme: 1, hs: 2 };
+const PRIO = { probleme: 0, reparation: 1, hs: 2, disponible: 3, controle: 4, operationnelle: 5 };
 const prio = m => PRIO[m.statut] ?? 9;
+const NOMS = () => [...new Set(["Cyril", "Nico", ...Object.values(S.equipes).map(e => e.chef).filter(Boolean)])];
 const byAlert = (a, b) => prio(a) - prio(b) || natural(a.id, b.id);
 const actives = () => Object.values(S.machines).filter(m => m.actif !== false);
 function whereTxt(m) {
-  if (m.statut === "reparation" || m.lieu === "reparateur") return `Chez ${m.reparateur || "le réparateur"}` + (m.depuis ? ` · ${sinceTxt(m.depuis)}` : "");
+  if (m.statut === "reparation" || m.lieu === "reparateur") return `Chez ${m.reparateur || "le réparateur"}` + ((m.depose_le || m.depuis) ? ` · ${sinceTxt(m.depose_le || m.depuis)}` : "") + (m.depose_par ? ` · déposée par ${m.depose_par}` : "");
   if (m.lieu === "depot") return "Au dépôt" + (m.equipe != null ? ` · ${teamLabel(m.equipe)}` : "") + (m.statut !== "operationnelle" && m.depuis ? ` · ${sinceTxt(m.depuis)}` : "");
   return teamLabel(m.equipe) + (["probleme", "hs"].includes(m.statut) && m.depuis ? ` · ${sinceTxt(m.depuis)}` : "");
 }
@@ -197,7 +200,9 @@ function updateStatus(force) {
   if (force === "busy" || flushing) { cls = "busy"; txt = "Envoi en cours…"; }
   else if (!navigator.onLine) { cls = "off"; txt = n ? `Hors ligne · ${n} modif${n > 1 ? "s" : ""} en attente d'envoi` : "Hors ligne · tout est gardé sur le téléphone"; }
   else if (n) { cls = "off"; txt = `${n} modif${n > 1 ? "s" : ""} en attente d'envoi`; }
-  else { txt = "Tout est sauvegardé en ligne"; }
+  else { txt = PHOTOS_WAIT.length ? "Données sauvegardées en ligne" : "Tout est sauvegardé en ligne"; }
+  const pp = PHOTOS_WAIT.length;
+  if (pp) { if (!cls) cls = "off"; txt += ` · ${pp} photo${pp > 1 ? "s" : ""} en attente d'envoi`; }
   if (REJ.length) { cls = "err"; txt += ` · ${REJ.length} refusée${REJ.length > 1 ? "s" : ""} (préviens Claude)`; }
   el.className = cls; $("#status-txt").textContent = txt;
 }
@@ -254,14 +259,13 @@ function cardHTML(m) {
 
 function viewHome() {
   const all = actives(), c = countBy(all);
-  const urgent = ["reparation", "probleme", "hs"].filter(s => c[s]);
-  const alerts = urgent.length
-    ? `<div class="alerts">${urgent.map(s => `<a class="alert" href="#/tout?statut=${s}" style="background:${sc(s)}"><b>${c[s]}</b> ${esc(ST[s].nom)}</a>`).join("")}</div>`
-    : `<div class="allgood">🌿 Tout le matériel est en état. Aucune machine en panne ni en réparation.</div>`;
+  const alerts = `<div class="alerts">${STATUTS.filter(s => c[s.id]).map(s => URGENTS.includes(s.id)
+      ? `<a class="alert" href="#/tout?statut=${s.id}" style="background:${sc(s.id)}"><b>${c[s.id]}</b> ${esc(s.nom)}</a>`
+      : `<a class="alert calm" href="#/tout?statut=${s.id}" style="--c:${sc(s.id)}"><b>${c[s.id]}</b> ${esc(s.nom)}</a>`).join("")}</div>`;
   const tiles = FAMILLES.map(f => {
     const l = all.filter(m => m.famille === f.id);
     return `<a class="tile" href="#/famille/${f.id}"><span class="ic" style="background:${fc(f.id)}">${ICONS[f.id]}</span>
-      <h2>${esc(f.nom)}</h2><span class="n">${l.length} machine${l.length > 1 ? "s" : ""}</span>${barHTML(l)}${dotsHTML(l, ["probleme", "reparation", "hs"])}</a>`;
+      <h2>${esc(f.nom)}</h2><span class="n">${l.length} machine${l.length > 1 ? "s" : ""}</span>${barHTML(l)}${dotsHTML(l, URGENTS)}</a>`;
   }).join("");
   return header("ASDJ - Tools", "Au service des jardins", { home: true, right: `<button class="iconbtn" data-act="logout" aria-label="Se déconnecter">${SVG.out}</button>` }) +
     `<main><input class="search" id="home-search" type="search" placeholder="🔍 Code, modèle, chef, type de machine…" autocomplete="off">${alerts}<div class="tiles">${tiles}
@@ -292,7 +296,7 @@ function viewFamille(fid, q) {
   const retired = off.length ? `<details class="retired"><summary>Machines retirées du parc (${off.length})</summary><div class="list">${off.sort((a, b) => natural(a.id, b.id)).map(cardHTML).join("")}</div></details>` : "";
   return header(f.nom, `${act.length} machine${act.length > 1 ? "s" : ""}`, { fam: fid }) +
     `<main><div class="seg"><button data-act="sort" data-v="num" class="${famSort === "num" ? "on" : ""}">Par numéro</button><button data-act="sort" data-v="equipe" class="${famSort === "equipe" ? "on" : ""}">Par équipe</button></div>
-    ${statusChips(act, sel, `#/famille/${fid}`)}${body}${retired}</main>
+    ${statusChips(act, sel, `#/famille/${fid}`)}${body}<div class="addbar"><button class="btn light" data-act="add" data-fam="${fid}">+ Ajouter une ${esc(f.un.toLowerCase())}</button></div>${retired}</main>
     <button class="fab" data-act="add" data-fam="${fid}" aria-label="Ajouter une machine">+</button>`;
 }
 
@@ -349,6 +353,9 @@ function viewMachine(id) {
       <div class="st">${esc(ST[m.statut] ? ST[m.statut].nom : m.statut)}</div>
       <div class="since">${esc(LIEUX[m.lieu] || "")}${m.lieu === "reparateur" && m.reparateur ? ` : ${esc(m.reparateur)}` : ""}${m.depuis ? ` · ${esc(sinceTxt(m.depuis))}` : ""}</div></div>
 
+    <div class="sect"><h3>Photo</h3><div class="photo" id="photo-box">${m.photo || pendingPhoto(m.id) ? "Chargement de la photo…" : "Pas encore de photo"}</div>
+      <label class="btn light" style="text-align:center">📷 ${m.photo ? "Changer la photo" : "Ajouter une photo"}<input type="file" accept="image/*" id="photo-input" hidden></label></div>
+
     <div class="sect"><h3>État de la machine</h3><div class="stgrid">
       ${STATUTS.map(s => `<button class="stbtn ${m.statut === s.id ? "on" : ""}" style="--c:${sc(s.id)}" data-act="statut" data-v="${s.id}">${esc(s.nom)}</button>`).join("")}
     </div></div>
@@ -358,6 +365,13 @@ function viewMachine(id) {
     </div>
       <div class="${showRep ? "" : "hidden"}"><label class="f" for="f-rep">Nom du réparateur (entreprise)</label>
         <input class="inp" id="f-rep" data-field="reparateur" value="${esc(m.reparateur)}" placeholder="Ex. : Motoculture Dupont"></div>
+      <div class="${showRep || m.depose_par || m.depose_le || m.recupere_le ? "" : "hidden"}">
+        <div class="two"><div><label class="f" for="f-dpar">Déposée par</label><input class="inp" id="f-dpar" list="noms" data-field="depose_par" value="${esc(m.depose_par)}" placeholder="Nom"></div>
+          <div><label class="f" for="f-dle">Déposée le</label><input class="inp" id="f-dle" type="date" data-field="depose_le" value="${esc(m.depose_le || "")}"></div></div>
+        <div class="two"><div><label class="f" for="f-rpar">Récupérée par</label><input class="inp" id="f-rpar" list="noms" data-field="recupere_par" value="${esc(m.recupere_par)}" placeholder="${showRep ? "Pas encore" : "Nom"}"></div>
+          <div><label class="f" for="f-rle">Récupérée le</label><input class="inp" id="f-rle" type="date" data-field="recupere_le" value="${esc(m.recupere_le || "")}"></div></div>
+        <datalist id="noms">${NOMS().map(n => `<option value="${esc(n)}">`).join("")}</datalist>
+      </div>
       <label class="f" for="f-depuis">Depuis le</label>
       <input class="inp" id="f-depuis" type="date" data-field="depuis" value="${esc(m.depuis || "")}">
       <label class="f" for="f-motif">Pourquoi ? (panne, problème, raison)</label>
@@ -382,13 +396,14 @@ function viewMachine(id) {
     <button class="btn ${m.actif === false ? "light" : "danger"}" data-act="actif">${m.actif === false ? "Remettre dans le parc" : "Retirer du parc (vendue, perdue, détruite…)"}</button>
   </main>`;
 }
-const CHAMPS = { statut: "État", lieu: "Lieu", reparateur: "Réparateur", depuis: "Depuis", motif: "Pourquoi", equipe: "Équipe", controle: "Contrôle", modele: "Modèle", notes: "Notes", actif: "Dans le parc", affectation: "Affectation" };
+const CHAMPS = { depose_par: "Déposée par", depose_le: "Déposée le", recupere_par: "Récupérée par", recupere_le: "Récupérée le", photo: "Photo", statut: "État", lieu: "Lieu", reparateur: "Réparateur", depuis: "Depuis", motif: "Pourquoi", equipe: "Équipe", controle: "Contrôle", modele: "Modèle", notes: "Notes", actif: "Dans le parc", affectation: "Affectation" };
 function histVal(c, v) {
   if (v == null || v === "") return "—";
   if (c === "statut") return ST[v] ? ST[v].nom : v;
   if (c === "lieu") return LIEUX[v] || v;
   if (c === "equipe") return teamLabel(+v);
-  if (c === "depuis" || c === "controle") return frDate(v);
+  if (["depuis", "controle", "depose_le", "recupere_le"].includes(c)) return frDate(v);
+  if (c === "photo") return "nouvelle photo";
   if (c === "actif") return v === "true" ? "oui" : "non";
   return v;
 }
@@ -438,7 +453,7 @@ function render(nav) {
   const y = nav ? (scrolls[r.key] || 0) : window.scrollY;
   $("#app").innerHTML = html;
   window.scrollTo(0, y);
-  if (a === "machine" && nav) loadHist(b);
+  if (a === "machine") { if (nav) loadHist(b); showPhoto(b); }
   if (a === "tout" && focusSearch) { focusSearch = false; const s = $("#search"); if (s) { s.focus(); const n = s.value.length; try { s.setSelectionRange(n, n); } catch (_) {} } }
   pendingRender = false;
 }
@@ -463,6 +478,8 @@ document.addEventListener("click", async e => {
   if (act === "statut" && id) {
     const m = S.machines[id], v = t.dataset.v, ch = { statut: v };
     if (v !== m.statut) ch.depuis = today();
+    if (v === "reparation" && m.statut !== "reparation") Object.assign(ch, { depose_le: today(), depose_par: "", recupere_par: "", recupere_le: null });
+    if (v !== "reparation" && m.statut === "reparation" && !m.recupere_le) ch.recupere_le = today();
     if (v === "reparation") ch.lieu = "reparateur";
     else if (v === "disponible") ch.lieu = "depot";
     else if (v === "controle") ch.controle = today();
@@ -475,8 +492,8 @@ document.addEventListener("click", async e => {
   if (act === "lieu" && id) {
     const m = S.machines[id], v = t.dataset.v, ch = { lieu: v };
     if (v !== m.lieu) ch.depuis = today();
-    if (v === "reparateur") ch.statut = "reparation";
-    else if (m.statut === "reparation") ch.statut = v === "depot" ? "disponible" : "operationnelle";
+    if (v === "reparateur") { ch.statut = "reparation"; if (m.statut !== "reparation") Object.assign(ch, { depose_le: today(), depose_par: "", recupere_par: "", recupere_le: null }); }
+    else if (m.statut === "reparation") { ch.statut = v === "depot" ? "disponible" : "operationnelle"; if (!m.recupere_le) ch.recupere_le = today(); }
     setFields(id, ch); render(false);
     if (v === "reparateur") setTimeout(() => { const i = $("#f-rep"); if (i) i.focus(); }, 50);
     return;
@@ -503,7 +520,7 @@ document.addEventListener("change", e => {
   const r = parseRoute(); if (r.parts[0] !== "machine") return;
   let v = el.value;
   if (fld === "equipe") v = v === "" ? null : +v;
-  if (fld === "depuis" || fld === "controle") v = v || null;
+  if (["depuis", "controle", "depose_le", "recupere_le"].includes(fld)) v = v || null;
   if (fld !== "equipe" && typeof v === "string") v = v.trim();
   const ch = { [fld]: v };
   if (fld === "equipe") { ch.affectation = v != null ? chef(v) : ""; const m = S.machines[r.parts[1]]; if (m.lieu === "equipe" && v == null) ch.lieu = "depot"; }
@@ -570,7 +587,7 @@ async function start() {
   started = true;
   if (!/^#\//.test(location.hash)) history.replaceState(null, "", location.pathname + "#/");
   stack = [location.hash.slice(1) || "/"];
-  $("#status").classList.remove("hidden"); updateStatus();
+  $("#status").classList.remove("hidden"); updateStatus(); await loadPhotoQueue(); sendPhotos();
   const hasCache = Object.keys(S.machines).length > 0;
   if (hasCache) render(true);
   $("#loader-msg").textContent = "Synchronisation en cours…";
@@ -588,13 +605,85 @@ async function start() {
       .subscribe();
   } catch (e) { console.warn("temps réel indisponible", e); }
 }
+/* ---------- photos : copie locale créée par l'appli, envoyée tout de suite, gardée en attente sans réseau ---------- */
+let PHOTOS_WAIT = [];   // [{key, id}] photos pas encore envoyées
+const idb = (() => { let p; return () => p || (p = new Promise((ok, ko) => { const r = indexedDB.open("asdj", 1); r.onupgradeneeded = () => r.result.createObjectStore("photos"); r.onsuccess = () => ok(r.result); r.onerror = () => ko(r.error); })); })();
+async function idbDo(mode, fn) { const db = await idb(); return new Promise((ok, ko) => { const tx = db.transaction("photos", mode); const st = tx.objectStore("photos"); const rq = fn(st); tx.oncomplete = () => ok(rq && rq.result); tx.onerror = () => ko(tx.error); }); }
+const idbGet = k => idbDo("readonly", st => st.get(k));
+const idbPut = (k, v) => idbDo("readwrite", st => st.put(v, k));
+const idbAll = () => idbDo("readonly", st => st.getAll());
+async function loadPhotoQueue() { try { PHOTOS_WAIT = (await idbAll() || []).filter(p => !p.sent).map(p => ({ key: p.key, id: p.id })); } catch (e) { PHOTOS_WAIT = []; } updateStatus(); }
+const pendingPhoto = id => PHOTOS_WAIT.some(p => p.id === id);
+function shrink(file) {
+  return new Promise((ok, ko) => {
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = () => {
+      const max = 1600, k = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement("canvas"); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+      c.toBlob(b => b ? ok(b) : ko(new Error("photo illisible")), "image/jpeg", 0.82);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); ko(new Error("photo illisible")); };
+    img.src = url;
+  });
+}
+async function addPhoto(id, file) {
+  const blob = await shrink(file);
+  const key = `machines/${id}/${Date.now()}.jpg`;
+  await idbPut(key, { key, id, blob, sent: false, at: Date.now() });
+  PHOTOS_WAIT.push({ key, id }); updateStatus();
+  photoUrls[key] = URL.createObjectURL(blob); latestLocal[id] = key;
+  showPhoto(id); sendPhotos();
+}
+let sendingPhotos = false;
+async function sendPhotos() {
+  if (sendingPhotos || !supa || !USER || !PHOTOS_WAIT.length) return;
+  sendingPhotos = true; updateStatus();
+  try {
+    for (const p of [...PHOTOS_WAIT]) {
+      const rec = await idbGet(p.key); if (!rec) { PHOTOS_WAIT = PHOTOS_WAIT.filter(x => x.key !== p.key); continue; }
+      const { error } = await supa.storage.from("photos").upload(p.key, rec.blob, { contentType: "image/jpeg", upsert: true });
+      if (error) throw error;
+      rec.sent = true; await idbPut(p.key, rec);   // la copie locale reste sur le téléphone
+      PHOTOS_WAIT = PHOTOS_WAIT.filter(x => x.key !== p.key);
+      if (latestLocal[p.id] === p.key || !S.machines[p.id].photo) setFields(p.id, { photo: p.key });
+    }
+  } catch (e) { console.warn("photo en attente", e); }
+  finally { sendingPhotos = false; updateStatus(); }
+}
+const photoUrls = {}, latestLocal = {};
+async function photoURL(key) {
+  if (photoUrls[key]) return photoUrls[key];
+  try { const rec = await idbGet(key); if (rec && rec.blob) return photoUrls[key] = URL.createObjectURL(rec.blob); } catch (e) {}
+  if (!supa || !navigator.onLine) return null;
+  const { data, error } = await supa.storage.from("photos").download(key);   // une seule photo, à la demande
+  if (error || !data) return null;
+  try { await idbPut(key, { key, id: key.split("/")[1], blob: data, sent: true, at: Date.now() }); } catch (e) {}
+  return photoUrls[key] = URL.createObjectURL(data);
+}
+async function showPhoto(id) {
+  const box = $("#photo-box"); if (!box) return;
+  const m = S.machines[id]; const wait = PHOTOS_WAIT.filter(p => p.id === id).pop();
+  const key = latestLocal[id] || (wait && wait.key) || (m && m.photo); if (!key) return;
+  const url = await photoURL(key);
+  const b = $("#photo-box"); if (!b || parseRoute().parts[1] !== id) return;
+  b.innerHTML = url ? `<img src="${url}" alt="Photo de ${esc(id)}">${PHOTOS_WAIT.some(p => p.key === key) ? `<span class="wait">En attente d'envoi</span>` : ""}`
+    : "Photo visible quand il y a du réseau";
+}
+document.addEventListener("change", async e => {
+  if (e.target.id !== "photo-input" || !e.target.files || !e.target.files[0]) return;
+  const r = parseRoute(); if (r.parts[0] !== "machine") return;
+  $("#photo-box").textContent = "Préparation de la photo…";
+  try { await addPhoto(r.parts[1], e.target.files[0]); } catch (err) { $("#photo-box").textContent = "Cette photo n'a pas pu être lue. Essaie une autre."; }
+});
+
 // filets de sécurité : renvoi toutes les 30 s, au retour du réseau et au retour dans l'appli
-setInterval(() => { if (Q.length) flush(); }, 30000);
+setInterval(() => { if (Q.length) flush(); if (PHOTOS_WAIT.length) sendPhotos(); }, 30000);
 setInterval(() => { if (document.visibilityState === "visible" && USER) refresh().then(ok => ok && softRender()); }, 120000);
-window.addEventListener("online", () => { updateStatus(); flush().then(() => refresh()).then(ok => ok && softRender()); });
+window.addEventListener("online", () => { updateStatus(); sendPhotos(); flush().then(() => refresh()).then(ok => ok && softRender()); });
 window.addEventListener("offline", () => updateStatus());
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && USER) { checkRobot(); flush().then(() => refresh()).then(ok => ok && softRender()); }
+  if (document.visibilityState === "visible" && USER) { checkRobot(); sendPhotos(); flush().then(() => refresh()).then(ok => ok && softRender()); }
 });
 
 (async function init() {

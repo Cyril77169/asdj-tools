@@ -12,7 +12,7 @@
 :root{
   --bg:#eef4ea; --surface:#ffffff; --ink:#1b2a1d; --muted:#5d6e5f; --line:#d7e4d2;
   --green:#2e7d32; --green-dark:#1e5c2a; --green-deep:#143f1d; --leaf:#8cc63f; --leaf-soft:#e3f1d3;
-  --s-operationnelle:#13b955; --s-controle:#00b3d6; --s-disponible:#2f7cf6; --s-probleme:#ff9500; --s-reparation:#ff3b30; --s-hs:#2c2c2e;
+  --s-operationnelle:#13b955; --s-controle:#00b3d6; --s-disponible:#2f7cf6; --s-probleme:#ff3b30; --s-reparation:#ff9500; --s-hs:#2c2c2e;
   --f-tondeuse:#e0442f; --f-debroussailleuse:#7fb52e; --f-souffleur:#d6247a; --f-taillehaie:#e8c400; --f-tronconneuse:#e8672b;
   --radius:18px; --shadow:0 2px 10px rgba(20,63,29,.08);
   --safe-b:env(safe-area-inset-bottom,0px);
@@ -52,6 +52,13 @@ main{padding:16px;max-width:760px;margin:0 auto}
 .alerts{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
 .alert{display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:999px;color:#fff;font-weight:700;font-size:15px;box-shadow:var(--shadow)}
 .alert b{font-size:18px}
+.alert.calm{background:#fff!important;color:var(--ink);border:2px solid var(--line);box-shadow:none;font-weight:600}
+.alert.calm::before{content:"";width:12px;height:12px;border-radius:50%;background:var(--c)}
+.photo{width:100%;aspect-ratio:4/3;border-radius:14px;background:var(--leaf-soft);display:grid;place-items:center;overflow:hidden;color:var(--muted);font-weight:600;margin-bottom:10px;position:relative}
+.photo img{width:100%;height:100%;object-fit:cover}
+.photo .wait{position:absolute;left:8px;bottom:8px;background:rgba(0,0,0,.6);color:#fff;padding:5px 10px;border-radius:999px;font-size:13px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.addbar{margin-top:16px}
 .allgood{background:var(--leaf-soft);color:var(--green-dark);padding:12px 14px;border-radius:14px;font-weight:600;margin-bottom:14px}
 
 /* ---------- tuiles familles ---------- */
