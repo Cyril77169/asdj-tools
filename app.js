@@ -27,7 +27,7 @@ const STATUTS = [
 const ST = Object.fromEntries(STATUTS.map(s => [s.id, s]));
 const URGENTS = ["probleme", "reparation", "hs"];
 const ATTRIB = ["operationnelle", "controle"];
-const LIEUX = { depot: "Au dépôt", equipe: "Avec l'équipe", reparateur: "Chez le réparateur" };
+const LIEUX = { depot: "Au dépôt", equipe: "Avec l'équipe", reparateur: "Chez le réparateur", pret: "Prêtée" };
 const PRIO = { probleme: 0, reparation: 1, hs: 2, disponible: 3, controle: 4, operationnelle: 5 };
 const sc = id => `var(--s-${id})`;
 const fc = id => `var(--f-${id})`;
@@ -86,6 +86,7 @@ const NOMS = () => [...new Set(["Cyril", "Nico", myName(), ...Object.values(S.eq
 const statMatch = (m, sel) => !sel || (sel === "attribuee" ? ATTRIB.includes(m.statut) : m.statut === sel);
 function whereTxt(m) {
   if (m.statut === "reparation" || m.lieu === "reparateur") return `Chez ${m.reparateur || "le réparateur"}` + ((m.depose_le || m.depuis) ? ` · ${sinceTxt(m.depose_le || m.depuis)}` : "") + (m.depose_par ? ` · déposée par ${m.depose_par}` : "");
+  if (m.lieu === "pret") return `Prêtée à ${m.pret_a || "quelqu'un"}` + (m.pret_le ? ` · ${sinceTxt(m.pret_le)}` : "") + (m.equipe != null ? ` · ${teamLabel(m.equipe)}` : "");
   if (m.lieu === "depot") return "Au dépôt" + (m.equipe != null ? ` · ${teamLabel(m.equipe)}` : "") + (m.statut !== "operationnelle" && m.depuis ? ` · ${sinceTxt(m.depuis)}` : "");
   return teamLabel(m.equipe) + (["probleme", "hs"].includes(m.statut) && m.depuis ? ` · ${sinceTxt(m.depuis)}` : "");
 }
@@ -365,8 +366,10 @@ function viewFamille(fid, q) {
 function teamCard(n, all) {
   const l = all.filter(m => m.equipe === n).sort(byAlert), bad = l.filter(m => URGENTS.includes(m.statut));
   const worst = bad.length ? bad[0].statut : null;
-  const minis = bad.map(m => `<span class="tmini" style="color:${sc(m.statut)}" title="${esc(m.id)}">${ICONS[m.famille] || ""}</span>`).join("");
-  return `<a class="tcard ${worst ? "bad" : ""}" href="#/equipe/${n}" style="--c:${worst ? sc(worst) : "var(--green)"}">
+  const minis = bad.map(m => `<span class="tmini" style="color:${sc(m.statut)}" title="${esc(m.id)} · ${esc(ST[m.statut].nom)}">${ICONS[m.famille] || ""}</span>`).join("");
+  // bandeau du haut : une part de couleur par machine en souci (rouge = problème, orange = réparation…)
+  const stops = bad.length ? bad.map((m, i) => `${sc(m.statut)} ${i / bad.length * 100}% ${(i + 1) / bad.length * 100}%`).join(",") : "var(--green) 0 100%";
+  return `<a class="tcard ${worst ? "bad" : ""}" href="#/equipe/${n}" style="--c:${worst ? sc(worst) : "var(--green)"};background:linear-gradient(90deg,${stops}) top/100% 7px no-repeat,#fff">
     <span class="tnum">${n}</span><b>${esc(chef(n) || "Chef à indiquer")}</b><small>${l.length} machine${l.length > 1 ? "s" : ""}</small>
     ${bad.length ? `<span class="tbad">${bad.length} en souci <span class="tminis">${minis}</span></span>` : `<span class="tok">✓ tout va bien</span>`}</a>`;
 }
@@ -398,7 +401,7 @@ function viewTout(q) {
   const all = actives();
   const list = all.filter(m => statMatch(m, sel) &&
     (!txt || txt.split(/\s+/).every(w => norm([m.id, m.modele, (m.modele || "").replace(/\s+/g, ""), FAM[m.famille] && FAM[m.famille].un, FAM[m.famille] && FAM[m.famille].nom,
-      chef(m.equipe), m.equipe != null ? `equipe ${m.equipe}` : "sans equipe", ST[m.statut] && ST[m.statut].nom, LIEUX[m.lieu], m.reparateur, m.depose_par, m.recupere_par, m.notes, m.motif].join(" ")).includes(w))))
+      chef(m.equipe), m.equipe != null ? `equipe ${m.equipe}` : "sans equipe", ST[m.statut] && ST[m.statut].nom, LIEUX[m.lieu], m.reparateur, m.depose_par, m.recupere_par, m.pret_a, m.lieu === "pret" ? "pretee pret" : "", m.notes, m.motif].join(" ")).includes(w))))
     .sort(byAlert);
   const base = `#/tout${txt ? `?q=${encodeURIComponent(q.get("q").trim())}` : ""}`;
   return header("Toutes les machines", `${all.length} machines`) +
@@ -415,6 +418,8 @@ const EVT = {
   reparation: { nom: "Partie en réparation", c: "reparation" },
   retour: { nom: "Revenue de réparation", c: "disponible" },
   hs: { nom: "Déclarée HS", c: "hs" },
+  pret: { nom: "Prêtée", c: "controle" },
+  rendu: { nom: "Rendue après prêt", c: "operationnelle" },
 };
 function eventsOf(id) { return S.events.filter(e => e.id === id).sort((a, b) => String(b.at).localeCompare(String(a.at))); }
 function eventsHTML(id) {
@@ -430,9 +435,11 @@ function eventsHTML(id) {
       if (e.equipe != null && e.type !== "retour") lines.push(`Équipe : ${teamLabel(e.equipe)}`);
       if (e.motif) lines.push(`Pourquoi : ${e.motif}`);
       if (e.reparateur) lines.push(`Réparateur : ${e.reparateur}`);
+      if (e.pret_a) lines.push(`${e.type === "rendu" ? "Rendue par" : "Prêtée à"} ${e.pret_a}${e.pret_le && e.type === "pret" ? ` le ${frDate(e.pret_le)}` : ""}`);
+      if (e.type === "rendu" && e.duree != null) lines.push(`Durée du prêt : ${e.duree} j`);
       if (e.depose_par) lines.push(`Déposée par ${e.depose_par}${e.depose_le ? ` le ${frDate(e.depose_le)}` : ""}`);
       if (e.recupere_par || e.recupere_le) lines.push(`Récupérée${e.recupere_par ? ` par ${e.recupere_par}` : ""}${e.recupere_le ? ` le ${frDate(e.recupere_le)}` : ""}`);
-      if (e.duree != null) lines.push(`Durée chez le réparateur : ${e.duree} j`);
+      if (e.duree != null && e.type === "retour") lines.push(`Durée chez le réparateur : ${e.duree} j`);
       if (e.auteur) lines.push(`Noté par ${e.auteur}`);
       return `<li style="--c:${sc(t.c)}"><div class="evtxt"><time>${d.toLocaleDateString("fr-FR")} à ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</time>
         <b>${esc(t.nom)}</b>${lines.map(l => `<div>${esc(l)}</div>`).join("")}</div>${e.photo ? `<button class="thumb" data-act="zoom" data-key="${esc(e.photo)}"><img data-photo="${esc(e.photo)}" alt="Photo"></button>` : ""}</li>`;
@@ -455,7 +462,8 @@ function viewMachine(id) {
 
     <div class="sect"><h3>Changer l'état</h3><div class="stgrid">
       ${STATUTS.map(s => `<button class="stbtn ${m.statut === s.id ? "on" : ""}" style="--c:${sc(s.id)}" data-act="statut" data-v="${s.id}">${esc(s.nom)}</button>`).join("")}
-    </div><p class="muted" style="margin:10px 0 0">Une confirmation est demandée à chaque changement.</p></div>
+    </div><button class="btn pretbtn" data-act="pret">🤝 ${m.lieu === "pret" ? `Rendue ? (prêtée à ${esc(m.pret_a || "quelqu'un")})` : "Prêter cette machine"}</button>
+    <p class="muted" style="margin:10px 0 0">Une confirmation est demandée à chaque changement.</p></div>
 
     <div class="sect"><h3>Photo</h3><div class="photo" id="photo-box" data-main="${esc(id)}">${m.photo || pendingPhoto(m.id, "main") ? "Chargement de la photo…" : "Pas encore de photo"}</div>
       <label class="btn light" style="text-align:center">📷 ${m.photo ? "Changer la photo" : "Ajouter une photo"}<input type="file" accept="image/*" id="photo-input" hidden></label></div>
@@ -467,6 +475,7 @@ function viewMachine(id) {
       ${inp("modele", "Modèle")}
       <label class="f" for="f-equipe">Équipe responsable</label><select class="inp" id="f-equipe" data-field="equipe">${teamOpts}</select>
       <label class="f">Où est-elle ?</label><div class="where3">${Object.entries(LIEUX).map(([k, v]) => `<button class="${lieu === k ? "on" : ""}" data-act="lieu" data-v="${k}">${esc(v)}</button>`).join("")}</div>
+      <div class="two"><div>${inp("pret_a", "Prêtée à", "text", "Nom", "noms")}</div><div>${inp("pret_le", "Prêtée le", "date")}</div></div>
       ${inp("reparateur", "Réparateur (entreprise)", "text", "Ex. : Motoculture Dupont")}
       <div class="two"><div>${inp("depose_par", "Déposée par", "text", "Nom", "noms")}</div><div>${inp("depose_le", "Déposée le", "date")}</div></div>
       <div class="two"><div>${inp("recupere_par", "Récupérée par", "text", "Nom", "noms")}</div><div>${inp("recupere_le", "Récupérée le", "date")}</div></div>
@@ -484,13 +493,13 @@ function viewMachine(id) {
   </main>
   <div class="savebar ${dirty ? "" : "hidden"}" id="savebar"><span>Modifications non enregistrées</span><button class="btn light" data-act="draft-cancel">Annuler</button><button class="btn" data-act="draft-save">💾 Enregistrer</button></div>`;
 }
-const CHAMPS = { depose_par: "Déposée par", depose_le: "Déposée le", recupere_par: "Récupérée par", recupere_le: "Récupérée le", photo: "Photo", statut: "État", lieu: "Lieu", reparateur: "Réparateur", depuis: "Depuis", motif: "Pourquoi", equipe: "Équipe", controle: "Contrôle", modele: "Modèle", notes: "Notes", actif: "Dans le parc", affectation: "Affectation", famille: "Type" };
+const CHAMPS = { pret_a: "Prêtée à", pret_le: "Prêtée le", depose_par: "Déposée par", depose_le: "Déposée le", recupere_par: "Récupérée par", recupere_le: "Récupérée le", photo: "Photo", statut: "État", lieu: "Lieu", reparateur: "Réparateur", depuis: "Depuis", motif: "Pourquoi", equipe: "Équipe", controle: "Contrôle", modele: "Modèle", notes: "Notes", actif: "Dans le parc", affectation: "Affectation", famille: "Type" };
 function histVal(c, v) {
   if (v == null || v === "") return "—";
   if (c === "statut") return ST[v] ? ST[v].nom : v;
   if (c === "lieu") return LIEUX[v] || v;
   if (c === "equipe") return teamLabel(+v);
-  if (["depuis", "controle", "depose_le", "recupere_le"].includes(c)) return frDate(v);
+  if (["depuis", "controle", "depose_le", "recupere_le", "pret_le"].includes(c)) return frDate(v);
   if (c === "actif") return v === "true" ? "oui" : "non";
   if (c === "photo") return "nouvelle photo";
   return v;
@@ -596,6 +605,36 @@ function askStatut(id, v) {
   });
 }
 
+/* ---------- prêt d'une machine (à n'importe qui) ---------- */
+function askPret(id) {
+  const m = S.machines[id], nomsList = `<datalist id="m-noms">${NOMS().map(n => `<option value="${esc(n)}">`).join("")}</datalist>`;
+  if (m.lieu === "pret") {
+    openModal({
+      title: `${esc(m.id)} : rendue`, ok: "Oui, elle est rendue",
+      html: `<p class="mq">Es-tu sûr que <b>${esc(m.id)}</b> a été rendue par <b>${esc(m.pret_a || "la personne")}</b> ?</p>
+        <label class="f" for="m-back">Elle revient…</label><select class="inp" id="m-back">${m.equipe != null ? `<option value="equipe">à ${esc(teamLabel(m.equipe))}</option>` : ""}<option value="depot">au dépôt</option></select>`,
+      onOk: () => {
+        const back = mval("m-back") || "depot";
+        addEvent(id, "rendu", { pret_a: m.pret_a, duree: m.pret_le ? daysSince(m.pret_le) : null });
+        setFields(id, { lieu: back, depuis: today() }); return true;
+      },
+    });
+    return;
+  }
+  openModal({
+    title: `Prêter ${esc(m.id)}`, ok: "Oui, prêter",
+    html: `<p class="mq">À qui prêtes-tu <b>${esc(m.id)}</b> (${esc(m.modele)}) ?</p>
+      <label class="f" for="m-pa">Nom de la personne</label><input class="inp" id="m-pa" list="m-noms" placeholder="N'importe quel employé" autocomplete="off">
+      <label class="f" for="m-ple">Le</label><input class="inp" id="m-ple" type="date" value="${today()}">${nomsList}`,
+    onOk: () => {
+      const a = mval("m-pa"); if (!a) { $("#m-msg").innerHTML = `<div class="msg err">Écris le nom de la personne.</div>`; return false; }
+      const le = mval("m-ple") || today();
+      addEvent(id, "pret", { pret_a: a, pret_le: le });
+      setFields(id, { lieu: "pret", pret_a: a, pret_le: le, depuis: le }); return true;
+    },
+  });
+}
+
 /* ---------- actions ---------- */
 document.addEventListener("click", async e => {
   const t = e.target.closest("[data-act]"); if (!t) return;
@@ -635,6 +674,7 @@ document.addEventListener("click", async e => {
   }
   const id = r.parts[0] === "machine" ? r.parts[1] : null;
   if (act === "statut" && id) return askStatut(id, t.dataset.v);
+  if (act === "pret" && id) return askPret(id);
   if (act === "lieu" && id) { draftSet(id, "lieu", t.dataset.v); render(false); return; }
   if (act === "draft-cancel") { DRAFT = null; render(false); return; }
   if (act === "draft-save" && id && DRAFT && DRAFT.id === id) {
@@ -672,11 +712,12 @@ function draftSet(id, fld, v) {
 function fieldValue(el) {
   const fld = el.dataset.field; let v = el.value;
   if (fld === "equipe") return v === "" ? null : +v;
-  if (["depuis", "controle", "depose_le", "recupere_le"].includes(fld)) return v || null;
+  if (["depuis", "controle", "depose_le", "recupere_le", "pret_le"].includes(fld)) return v || null;
   return v.trim();
 }
 document.addEventListener("input", e => {
   const el = e.target;
+  if (MODAL && el.closest && el.closest("#modal")) { const mm = $("#m-msg"); if (mm) mm.innerHTML = ""; }
   if (el.dataset && el.dataset.field) { const r = parseRoute(); if (r.parts[0] === "machine") draftSet(r.parts[1], el.dataset.field, fieldValue(el)); return; }
   if (el.id === "home-search") { const v = el.value.trim(); if (v) { focusSearch = true; go(`#/tout?q=${encodeURIComponent(v)}`); } return; }
   if (el.id !== "search") return;
