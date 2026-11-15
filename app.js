@@ -1,6 +1,7 @@
 /* ASDJ - Tools : suivi du matériel par famille et par équipe.
    Données partagées entre les comptes connectés (Supabase), copie locale + file d'attente pour le hors ligne. */
 "use strict";
+const APP_V = 1;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
 const CFG = window.APP_CONFIG;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -16,16 +17,18 @@ const FAMILLES = [
 const FAM = Object.fromEntries(FAMILLES.map(f => [f.id, f]));
 /* ordre = priorité d'affichage : ce qui demande une action d'abord, le normal à la fin */
 const STATUTS = [
-  { id: "probleme", nom: "Problème technique" },
-  { id: "reparation", nom: "En réparation" },
-  { id: "hs", nom: "HS" },
-  { id: "disponible", nom: "Disponible" },
-  { id: "controle", nom: "Contrôle fait" },
-  { id: "operationnelle", nom: "Opérationnelle" },
+  { id: "probleme", nom: "Problème technique", q: "a un problème technique" },
+  { id: "reparation", nom: "En réparation", q: "part en réparation" },
+  { id: "hs", nom: "HS", q: "est HS (hors service)" },
+  { id: "disponible", nom: "Disponible", q: "est disponible au dépôt" },
+  { id: "controle", nom: "Contrôle fait", q: "a été contrôlée" },
+  { id: "operationnelle", nom: "Opérationnelle", q: "est opérationnelle" },
 ];
-const URGENTS = ["probleme", "reparation", "hs"];
 const ST = Object.fromEntries(STATUTS.map(s => [s.id, s]));
+const URGENTS = ["probleme", "reparation", "hs"];
+const ATTRIB = ["operationnelle", "controle"];
 const LIEUX = { depot: "Au dépôt", equipe: "Avec l'équipe", reparateur: "Chez le réparateur" };
+const PRIO = { probleme: 0, reparation: 1, hs: 2, disponible: 3, controle: 4, operationnelle: 5 };
 const sc = id => `var(--s-${id})`;
 const fc = id => `var(--f-${id})`;
 
@@ -34,7 +37,7 @@ const ICONS = {
   tondeuse: `<svg viewBox="0 0 64 64" fill="currentColor"><path d="M4 31 17 25l4 15-13 2z" opacity=".75"/><path d="M15 40c0-8 6-13 15-13h16c6 0 11 4 11 10v3z"/><rect x="29" y="17" width="16" height="10" rx="3"/><rect x="33" y="13" width="7" height="5" rx="1.5"/><path d="M23 28 11 8" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="M6 8h10" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path fill-rule="evenodd" d="M15 46a7 7 0 1 0 14 0a7 7 0 1 0-14 0zm4.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0zM43 46a7 7 0 1 0 14 0a7 7 0 1 0-14 0zm4.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0z"/><path d="M4 58h56" stroke="currentColor" stroke-width="2.5" stroke-dasharray="3 3" opacity=".7"/></svg>`,
   debroussailleuse: `<svg viewBox="0 0 64 64" fill="currentColor"><rect x="44" y="3" width="16" height="13" rx="4" transform="rotate(45 52 9.5)"/><path d="M46 17 13 50" fill="none" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/><path d="M21 24 37 40" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"/><circle cx="20" cy="23" r="3.5"/><circle cx="38" cy="41" r="3.5"/><path d="M2 49a12 8 0 0 1 21-4l-5 6z" opacity=".75"/><ellipse cx="12" cy="53" rx="7" ry="3"/><path d="M3 59l5-4M21 59l-5-4M12 61v-5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`,
   souffleur: `<svg viewBox="0 0 64 64" fill="currentColor"><path fill-rule="evenodd" d="M10 6h14a6 6 0 0 1 6 6v26a6 6 0 0 1-6 6H10a6 6 0 0 1-6-6V12a6 6 0 0 1 6-6zm1 8v3h12v-3zm0 6v3h12v-3zm0 6v3h12v-3z"/><path d="M8 44 6 50M26 44l2 6" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><path d="M28 34c12 0 12 14 26 14" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round"/><rect x="36" y="32" width="5" height="10" rx="2"/><path d="M54 44v8l7-2v-4z"/><path d="M57 38l5-3M58 56l5 3" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" opacity=".8"/></svg>`,
-  taillehaie: `<svg viewBox="0 0 64 64" fill="currentColor"><rect x="3" y="24" width="23" height="16" rx="6"/><path d="M6 26c0-9 7-13 16-9" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="M15 24c0-11 13-11 13 0" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><rect x="24" y="29" width="37" height="6" rx="2"/><path d="M25 29l2-4 2 4z M29 29l2-4 2 4z M33 29l2-4 2 4z M37 29l2-4 2 4z M41 29l2-4 2 4z M45 29l2-4 2 4z M49 29l2-4 2 4z M53 29l2-4 2 4z M57 29l2-4 2 4z"/><path d="M25 35l2 4 2-4z M29 35l2 4 2-4z M33 35l2 4 2-4z M37 35l2 4 2-4z M41 35l2 4 2-4z M45 35l2 4 2-4z M49 35l2 4 2-4z M53 35l2 4 2-4z M57 35l2 4 2-4z"/></svg>`,
+  taillehaie: `<svg viewBox="0 0 64 64" fill="currentColor"><g transform="rotate(-38 32 32)"><rect x="1" y="25" width="22" height="14" rx="6"/><path d="M5 26c0-8 6-11 13-8" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="M14 25c0-10 11-10 11 0" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><rect x="22" y="29" width="41" height="6" rx="1.5"/><path d="M26 29l1.6-5 1.6 5z M29 29l1.6-5 1.6 5z M32 29l1.6-5 1.6 5z M35 29l1.6-5 1.6 5z M38 29l1.6-5 1.6 5z M41 29l1.6-5 1.6 5z M44 29l1.6-5 1.6 5z M47 29l1.6-5 1.6 5z M50 29l1.6-5 1.6 5z M53 29l1.6-5 1.6 5z M56 29l1.6-5 1.6 5z M59 29l1.6-5 1.6 5z"/><path d="M26 35l1.6 5 1.6-5z M29 35l1.6 5 1.6-5z M32 35l1.6 5 1.6-5z M35 35l1.6 5 1.6-5z M38 35l1.6 5 1.6-5z M41 35l1.6 5 1.6-5z M44 35l1.6 5 1.6-5z M47 35l1.6 5 1.6-5z M50 35l1.6 5 1.6-5z M53 35l1.6 5 1.6-5z M56 35l1.6 5 1.6-5z M59 35l1.6 5 1.6-5z"/></g></svg>`,
   tronconneuse: `<svg viewBox="0 0 64 64" fill="currentColor"><path d="M8 22h20a5 5 0 0 1 5 5v14a5 5 0 0 1-5 5H10a5 5 0 0 1-5-5V25a3 3 0 0 1 3-3z"/><path d="M11 23c0-9 6-12 14-12h6v11" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round" stroke-linecap="round"/><path d="M5 42H1" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><path d="M33 28h22a6 6 0 0 1 0 12H33z"/><path d="M33 25.5h22a8.5 8.5 0 0 1 0 17H33" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="2.2 2"/></svg>`,
 };
 const SVG = {
@@ -42,23 +45,24 @@ const SVG = {
   team: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><circle cx="17" cy="9" r="2.8"/><path d="M16.5 14.2c2.9.2 5 2.3 5 5.3"/></svg>`,
   list: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg>`,
   out: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 17l5-5-5-5M15 12H4"/></svg>`,
+  chev: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>`,
 };
 
 /* ---------- état + stockage local ---------- */
 const LS_CACHE = "asdj_cache_v1", LS_Q = "asdj_queue_v1", LS_REJ = "asdj_rejets_v1";
-const S = { machines: {}, equipes: {}, cacheAt: 0 };
+const S = { machines: {}, equipes: {}, events: [], cacheAt: 0 };
 let Q = [];        // modifications pas encore envoyées
 let REJ = [];      // modifications refusées par le serveur (gardées, jamais effacées)
-let supa = null, USER = null, online = navigator.onLine, lastSyncOk = 0;
+let supa = null, USER = null;
 try {
   const c = JSON.parse(localStorage.getItem(LS_CACHE) || "null");
-  if (c) { S.machines = c.m || {}; S.equipes = c.e || {}; S.cacheAt = c.at || 0; }
+  if (c) { S.machines = c.m || {}; S.equipes = c.e || {}; S.events = c.ev || []; S.cacheAt = c.at || 0; }
   Q = JSON.parse(localStorage.getItem(LS_Q) || "[]");
   REJ = JSON.parse(localStorage.getItem(LS_REJ) || "[]");
 } catch (e) { console.warn("cache illisible", e); }
 function saveLocal() {
   try {
-    localStorage.setItem(LS_CACHE, JSON.stringify({ m: S.machines, e: S.equipes, at: S.cacheAt }));
+    localStorage.setItem(LS_CACHE, JSON.stringify({ m: S.machines, e: S.equipes, ev: S.events, at: S.cacheAt }));
     localStorage.setItem(LS_Q, JSON.stringify(Q));
     localStorage.setItem(LS_REJ, JSON.stringify(REJ));
   } catch (e) { console.warn("sauvegarde locale impossible", e); }
@@ -70,14 +74,16 @@ const frDate = iso => { if (!iso) return ""; const [y, m, d] = String(iso).slice
 const daysSince = iso => { if (!iso) return null; const t = Date.parse(String(iso).slice(0, 10) + "T00:00:00"); return Math.max(0, Math.round((Date.parse(today() + "T00:00:00") - t) / 864e5)); };
 const sinceTxt = iso => { const n = daysSince(iso); if (n == null) return ""; return `depuis le ${frDate(iso)}` + (n === 0 ? " (aujourd'hui)" : ` (${n} j)`); };
 const chef = n => (S.equipes[n] && S.equipes[n].chef) || "";
-const teamLabel = n => n == null ? "Sans équipe" : `Équipe ${n}` + (chef(n) ? ` · ${chef(n)}` : "");
+const teamLabel = n => n == null || n === "" ? "Sans équipe" : `Équipe ${n}` + (chef(n) ? ` · ${chef(n)}` : "");
 const natural = (a, b) => a.localeCompare(b, "fr", { numeric: true });
-const norm = t => String(t ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-const PRIO = { probleme: 0, reparation: 1, hs: 2, disponible: 3, controle: 4, operationnelle: 5 };
+const norm = t => String(t ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 const prio = m => PRIO[m.statut] ?? 9;
-const NOMS = () => [...new Set(["Cyril", "Nico", ...Object.values(S.equipes).map(e => e.chef).filter(Boolean)])];
 const byAlert = (a, b) => prio(a) - prio(b) || natural(a.id, b.id);
 const actives = () => Object.values(S.machines).filter(m => m.actif !== false);
+const teamNums = () => Object.keys(S.equipes).map(Number).sort((a, b) => a - b);
+const myName = () => (USER && USER.user_metadata && USER.user_metadata.nom) || "";
+const NOMS = () => [...new Set(["Cyril", "Nico", myName(), ...Object.values(S.equipes).map(e => e.chef)].filter(Boolean))];
+const statMatch = (m, sel) => !sel || (sel === "attribuee" ? ATTRIB.includes(m.statut) : m.statut === sel);
 function whereTxt(m) {
   if (m.statut === "reparation" || m.lieu === "reparateur") return `Chez ${m.reparateur || "le réparateur"}` + ((m.depose_le || m.depuis) ? ` · ${sinceTxt(m.depose_le || m.depuis)}` : "") + (m.depose_par ? ` · déposée par ${m.depose_par}` : "");
   if (m.lieu === "depot") return "Au dépôt" + (m.equipe != null ? ` · ${teamLabel(m.equipe)}` : "") + (m.statut !== "operationnelle" && m.depuis ? ` · ${sinceTxt(m.depuis)}` : "");
@@ -102,34 +108,38 @@ function applyOp(op) {
     if (!S.machines[op.row.id]) S.machines[op.row.id] = Object.assign({ field_ts: {} }, op.row);
   } else if (op.k === "eq") {
     S.equipes[op.n] = Object.assign({}, S.equipes[op.n], { numero: op.n, chef: op.v });
+  } else if (op.k === "ev") {
+    if (!S.events.some(e => e.uid === op.ev.uid)) S.events.push(op.ev);
   }
 }
 let tsLast = 0;
 const nowTs = () => { const t = Math.max(Date.now(), tsLast + 1); tsLast = t; return t; };
-function setFields(id, obj) {
+function queue(op) { Q.push(op); applyOp(op); }
+function setFields(id, obj, silent) {
   const m = S.machines[id]; if (!m) return;
   for (const [c, v] of Object.entries(obj)) {
     if ((m[c] ?? null) === (v ?? null)) continue;
-    const op = { k: "f", id, c, v, ts: nowTs() };
     // une seule modif en attente par champ : la dernière remplace la précédente
     Q = Q.filter(o => !(o.k === "f" && o.id === id && o.c === c));
-    Q.push(op); applyOp(op);
+    queue({ k: "f", id, c, v, ts: nowTs() });
   }
-  saveLocal(); updateStatus(); flushSoon();
+  saveLocal(); updateStatus(); if (!silent) flushSoon();
 }
-function addMachine(row) {
-  const op = { k: "new", row, ts: nowTs() };
-  Q.push(op); applyOp(op); saveLocal(); updateStatus(); flushSoon();
+function addEvent(id, type, data) {
+  const m = S.machines[id];
+  const ev = Object.assign({ uid: `${id}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, id, type, at: new Date().toISOString(),
+    equipe: m.equipe, chef: chef(m.equipe), auteur: myName() }, data);
+  queue({ k: "ev", ev, ts: nowTs() }); saveLocal(); updateStatus(); flushSoon();
 }
+function addMachine(row) { queue({ k: "new", row, ts: nowTs() }); saveLocal(); updateStatus(); flushSoon(); }
 function setChef(n, v) {
-  const op = { k: "eq", n, v, ts: nowTs() };
   Q = Q.filter(o => !(o.k === "eq" && o.n === n));
-  Q.push(op); applyOp(op); saveLocal(); updateStatus(); flushSoon();
+  queue({ k: "eq", n, v, ts: nowTs() }); saveLocal(); updateStatus(); flushSoon();
 }
 /* une ligne arrive du serveur : on la prend, puis on remet par-dessus ce qui n'est pas encore envoyé */
 function mergeRow(r) {
   S.machines[r.id] = Object.assign({}, r);
-  Q.filter(o => (o.k === "f" || o.k === "new") && (o.id === r.id || (o.row && o.row.id === r.id))).forEach(applyOp);
+  Q.filter(o => (o.k === "f" && o.id === r.id) || (o.k === "new" && o.row.id === r.id)).forEach(applyOp);
 }
 function mergeEquipe(r) {
   S.equipes[r.numero] = Object.assign({}, r);
@@ -148,6 +158,7 @@ async function flush() {
       if (op.k === "f") res = await supa.rpc("maj_champ", { p_id: op.id, p_champ: op.c, p_valeur: op.v == null ? "" : String(op.v), p_ts: new Date(op.ts).toISOString() });
       else if (op.k === "new") res = await supa.from("machines").upsert(op.row, { onConflict: "id", ignoreDuplicates: true });
       else if (op.k === "eq") res = await supa.from("equipes").upsert({ numero: op.n, chef: op.v, updated_at: new Date(op.ts).toISOString() });
+      else if (op.k === "ev") res = await supa.from("historique").insert({ machine_id: op.ev.id, champ: "evenement", nouveau: JSON.stringify(op.ev) });
       if (res && res.error) {
         if (isNetErr(res.error)) throw res.error;
         op.err = (op.err || 0) + 1; op.msg = res.error.message;
@@ -158,16 +169,17 @@ async function flush() {
       if (op.k === "f" && res.data && res.data.id) mergeRow(res.data);
       saveLocal();
     }
-    lastSyncOk = Date.now();
   } catch (e) { console.warn("envoi reporté", e); }
   finally { flushing = false; updateStatus(); softRender(); }
 }
 
 /* ---------- chargement depuis le serveur (paginé : 1000 lignes max par requête) ---------- */
-async function fetchAll(table, order) {
+async function fetchAll(table, order, filter) {
   let out = [], from = 0;
   for (;;) {
-    const { data, error } = await supa.from(table).select("*").order(order).range(from, from + 999);
+    let q = supa.from(table).select("*");
+    if (filter) q = filter(q);
+    const { data, error } = await q.order(order).range(from, from + 999);
     if (error) throw error;
     out = out.concat(data || []);
     if (!data || data.length < 1000) break;
@@ -180,12 +192,13 @@ async function refresh() {
   if (refreshing || !supa || !USER) return false;
   refreshing = true;
   try {
-    const [ms, es] = await Promise.all([fetchAll("machines", "id"), fetchAll("equipes", "numero")]);
-    const keepNew = Q.filter(o => o.k === "new");
+    const [ms, es, hs] = await Promise.all([fetchAll("machines", "id"), fetchAll("equipes", "numero"),
+      fetchAll("historique", "id", q => q.eq("champ", "evenement"))]);
     S.machines = {}; ms.forEach(r => S.machines[r.id] = r);
     S.equipes = {}; es.forEach(r => S.equipes[r.numero] = r);
-    keepNew.forEach(applyOp); Q.forEach(applyOp);
-    S.cacheAt = Date.now(); lastSyncOk = Date.now(); saveLocal();
+    S.events = []; hs.forEach(h => { try { S.events.push(JSON.parse(h.nouveau)); } catch (e) {} });
+    Q.forEach(applyOp);
+    S.cacheAt = Date.now(); saveLocal();
     return true;
   } catch (e) { console.warn("lecture serveur impossible", e); return false; }
   finally { refreshing = false; updateStatus(); }
@@ -194,14 +207,12 @@ async function refresh() {
 /* ---------- barre d'état ---------- */
 function updateStatus(force) {
   const el = $("#status"); if (!el || !USER) return;
-  el.classList.remove("hidden", "busy", "off", "err");
   let txt, cls = "";
-  const n = Q.length;
-  if (force === "busy" || flushing) { cls = "busy"; txt = "Envoi en cours…"; }
+  const n = Q.length, pp = PHOTOS_WAIT.length;
+  if (force === "busy" || flushing || sendingPhotos) { cls = "busy"; txt = "Envoi en cours…"; }
   else if (!navigator.onLine) { cls = "off"; txt = n ? `Hors ligne · ${n} modif${n > 1 ? "s" : ""} en attente d'envoi` : "Hors ligne · tout est gardé sur le téléphone"; }
   else if (n) { cls = "off"; txt = `${n} modif${n > 1 ? "s" : ""} en attente d'envoi`; }
-  else { txt = PHOTOS_WAIT.length ? "Données sauvegardées en ligne" : "Tout est sauvegardé en ligne"; }
-  const pp = PHOTOS_WAIT.length;
+  else txt = pp ? "Données sauvegardées en ligne" : "Tout est sauvegardé en ligne";
   if (pp) { if (!cls) cls = "off"; txt += ` · ${pp} photo${pp > 1 ? "s" : ""} en attente d'envoi`; }
   if (REJ.length) { cls = "err"; txt += ` · ${REJ.length} refusée${REJ.length > 1 ? "s" : ""} (préviens Claude)`; }
   el.className = cls; $("#status-txt").textContent = txt;
@@ -219,9 +230,34 @@ async function checkRobot() {
   } catch (e) { /* hors ligne : rien */ }
 }
 
+/* ---------- mise à jour de l'appli : écran bloquant tant que la nouvelle version n'est pas chargée ---------- */
+async function checkVersion() {
+  if (!navigator.onLine) return false;   // hors réseau : on garde la version du téléphone
+  try {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 5000);
+    const r = await fetch(`version.json?t=${Date.now()}`, { cache: "no-store", signal: ctl.signal }); clearTimeout(t);
+    if (!r.ok) return false;
+    const { v } = await r.json();
+    if (!(v > APP_V)) { sessionStorage.removeItem("asdj_upd"); return false; }
+    const tries = +(sessionStorage.getItem("asdj_upd") || 0);
+    if (tries >= 3) return false;          // sécurité : jamais bloqué indéfiniment
+    sessionStorage.setItem("asdj_upd", tries + 1);
+    showUpdating();
+    if (Q.length) await flush();           // on envoie d'abord ce qui attend
+    try { const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration(); if (reg) await reg.update(); } catch (e) {}
+    setTimeout(() => location.reload(), 800);
+    return true;
+  } catch (e) { return false; }
+}
+function showUpdating() {
+  let l = $("#loader");
+  if (!l) { l = document.createElement("div"); l.id = "loader"; document.body.appendChild(l); }
+  l.className = ""; l.innerHTML = `<img src="icons/icon-192.png" alt=""><h1>ASDJ - Tools</h1><div class="spin"></div><p>Mise à jour de l'appli…<br>Ça ne prend que quelques secondes.</p>`;
+}
+
 /* ---------- navigation (bouton retour du téléphone = écran précédent) ---------- */
 const scrolls = {};
-let stack = [], replacing = false, current = "";
+let stack = [], replacing = false;
 function go(h) { location.hash = h; }
 function replaceTo(h) { replacing = true; location.replace(h); }
 function back() { if (stack.length > 1) history.back(); else replaceTo("#/"); }
@@ -233,6 +269,7 @@ window.addEventListener("hashchange", e => {
   else if (stack.length > 1 && stack[stack.length - 2] === nw) stack.pop();
   else stack.push(nw);
   if (nw === "/") stack = ["/"];
+  closeModal(true);
   render(true);
 });
 function parseRoute() {
@@ -241,14 +278,32 @@ function parseRoute() {
   return { parts: path.split("/").filter(Boolean).map(decodeURIComponent), q: new URLSearchParams(qs || ""), key: h };
 }
 
+/* ---------- fenêtre de confirmation ---------- */
+let MODAL = null;
+function openModal({ title, html, ok = "Oui, confirmer", okColor, cancel = "Non, annuler", onOk, onOpen }) {
+  closeModal(true);
+  const d = document.createElement("div"); d.id = "modal";
+  d.innerHTML = `<div class="mback" data-act="m-cancel"></div><div class="mbox" role="dialog" aria-modal="true">
+    <h2>${title}</h2><div class="mbody">${html || ""}</div><div id="m-msg"></div>
+    <div class="mbtns"><button class="btn light" data-act="m-cancel">${esc(cancel)}</button><button class="btn" data-act="m-ok" ${okColor ? `style="background:${okColor}"` : ""}>${esc(ok)}</button></div></div>`;
+  document.body.appendChild(d); document.body.classList.add("noscroll");
+  MODAL = { onOk, el: d };
+  if (onOpen) onOpen(d);
+}
+function closeModal(silent) {
+  if (!MODAL) return; MODAL.el.remove(); MODAL = null; document.body.classList.remove("noscroll");
+  if (!silent && pendingRender) softRender();
+}
+const mval = id => { const e = document.getElementById(id); return e ? e.value.trim() : ""; };
+const mfile = id => { const e = document.getElementById(id); return e && e.files && e.files[0]; };
+
 /* ---------- rendu ---------- */
 function header(title, sub, opts = {}) {
   const left = opts.home
     ? `<img class="logo" src="icons/icon-192.png" alt="">`
     : `<button class="iconbtn" data-act="back" aria-label="Retour">${SVG.back}</button>`;
-  const right = opts.right || "";
   const famIc = opts.fam ? `<span class="hfam" style="color:${fc(opts.fam)}">${ICONS[opts.fam]}</span>` : "";
-  return `<header class="top"><div class="row">${left}${famIc}<h1>${esc(title)}${sub ? `<small>${esc(sub)}</small>` : ""}</h1>${right}</div></header>`;
+  return `<header class="top"><div class="row">${left}${famIc}<h1>${esc(title)}${sub ? `<small>${esc(sub)}</small>` : ""}</h1>${opts.right || ""}</div></header>`;
 }
 function cardHTML(m) {
   return `<a class="card ${m.actif === false ? "off" : ""}" href="#/machine/${encodeURIComponent(m.id)}" style="--c:${sc(m.statut)}">
@@ -256,163 +311,193 @@ function cardHTML(m) {
     <span class="body"><span class="num">${esc(m.id)}</span><span class="mod">${esc(m.modele)}</span><div class="where">${esc(whereTxt(m))}</div></span>
     <span class="side"><span class="pill">${esc(ST[m.statut] ? ST[m.statut].nom : m.statut)}</span></span></a>`;
 }
+function summaryHTML(list, base) {
+  const c = countBy(list), att = c.operationnelle + c.controle;
+  const cell = (id, n, label, big) => `<a class="sum ${big ? "big" : ""} ${n ? "" : "zero"}" href="${base}statut=${id}" style="--c:${id === "attribuee" ? sc("operationnelle") : sc(id)}"><b>${n}</b><span>${esc(label)}</span></a>`;
+  return `<div class="summary"><div class="sumrow two">${cell("probleme", c.probleme, c.probleme > 1 ? "Problèmes techniques" : "Problème technique", true)}${cell("reparation", c.reparation, "En réparation", true)}</div>
+    <div class="sumrow three">${cell("disponible", c.disponible, c.disponible > 1 ? "Disponibles" : "Disponible")}${cell("attribuee", att, att > 1 ? "Attribuées" : "Attribuée")}${cell("hs", c.hs, "HS")}</div></div>`;
+}
 
 function viewHome() {
-  const all = actives(), c = countBy(all);
-  const alerts = `<div class="alerts">${STATUTS.filter(s => c[s.id]).map(s => URGENTS.includes(s.id)
-      ? `<a class="alert" href="#/tout?statut=${s.id}" style="background:${sc(s.id)}"><b>${c[s.id]}</b> ${esc(s.nom)}</a>`
-      : `<a class="alert calm" href="#/tout?statut=${s.id}" style="--c:${sc(s.id)}"><b>${c[s.id]}</b> ${esc(s.nom)}</a>`).join("")}</div>`;
+  const all = actives();
   const tiles = FAMILLES.map(f => {
     const l = all.filter(m => m.famille === f.id);
     return `<a class="tile" href="#/famille/${f.id}"><span class="ic" style="background:${fc(f.id)}">${ICONS[f.id]}</span>
       <h2>${esc(f.nom)}</h2><span class="n">${l.length} machine${l.length > 1 ? "s" : ""}</span>${barHTML(l)}${dotsHTML(l, URGENTS)}</a>`;
   }).join("");
+  const teams = teamNums();
   return header("ASDJ - Tools", "Au service des jardins", { home: true, right: `<button class="iconbtn" data-act="logout" aria-label="Se déconnecter">${SVG.out}</button>` }) +
-    `<main><input class="search" id="home-search" type="search" placeholder="🔍 Code, modèle, chef, type de machine…" autocomplete="off">${alerts}<div class="tiles">${tiles}
-      <a class="tile" href="#/equipes"><span class="ic" style="background:var(--green)">${SVG.team}</span><h2>Par équipe</h2><span class="n">${Object.keys(S.equipes).length} équipes</span>${barHTML(all)}</a>
-      <a class="tile wide" href="#/tout"><span class="ic">${SVG.list}</span><span class="txt"><h2>Toutes les machines</h2><span class="n">${all.length} machines · recherche</span></span></a>
-    </div></main>`;
+    `<main><input class="search" id="home-search" type="search" placeholder="🔍 Code, modèle, chef, type de machine…" autocomplete="off">
+    ${summaryHTML(all, "#/tout?")}
+    <div class="tiles">${tiles}</div>
+    <a class="teamband" href="#/equipes"><span class="tb-top"><span class="tb-ic">${SVG.team}</span><span class="tb-txt"><b>Les équipes</b><small>${teams.length} équipes · le matériel de chaque chef</small></span><span class="tb-chev">${SVG.chev}</span></span>
+      <span class="tb-badges">${teams.map(n => { const bad = all.some(m => m.equipe === n && URGENTS.includes(m.statut)); return `<span class="tb-b ${bad ? "warn" : ""}"><i>${n}</i>${esc(chef(n) || "—")}</span>`; }).join("")}</span></a>
+    <a class="allband" href="#/tout"><span class="tb-ic">${SVG.list}</span><span class="tb-txt"><b>Toutes les machines</b><small>${all.length} machines</small></span><span class="tb-chev">${SVG.chev}</span></a>
+    </main>`;
 }
 
 let famSort = "num";
 function statusChips(list, sel, base) {
-  const c = countBy(list);
+  const c = countBy(list), sep = base.includes("?") ? "&" : "?";
   return `<div class="chips"><a class="chip ${!sel ? "on" : ""}" href="${base}">Toutes · ${list.length}</a>${STATUTS.filter(s => c[s.id]).map(s =>
-    `<a class="chip ${sel === s.id ? "on" : ""}" href="${base}${base.includes("?") ? "&" : "?"}statut=${s.id}"><span class="sw" style="background:${sc(s.id)}"></span>${esc(s.nom)} · ${c[s.id]}</a>`).join("")}</div>`;
+    `<a class="chip ${sel === s.id ? "on" : ""}" href="${base}${sep}statut=${s.id}"><span class="sw" style="background:${sc(s.id)}"></span>${esc(s.nom)} · ${c[s.id]}</a>`).join("")}</div>`;
 }
 function viewFamille(fid, q) {
   const f = FAM[fid]; if (!f) return viewHome();
   const all = Object.values(S.machines).filter(m => m.famille === fid);
   const act = all.filter(m => m.actif !== false), off = all.filter(m => m.actif === false);
   const sel = q.get("statut");
-  let list = act.filter(m => !sel || m.statut === sel);
+  const list = act.filter(m => statMatch(m, sel));
   let body;
   if (famSort === "equipe") {
     const groups = {};
     list.forEach(m => { const k = m.equipe == null ? "z" : String(m.equipe).padStart(3, "0"); (groups[k] = groups[k] || []).push(m); });
-    body = Object.keys(groups).sort().map(k => `<div class="group-h">${esc(k === "z" ? "Sans équipe (dépôt)" : teamLabel(+k))}</div><div class="list">${groups[k].sort((a, b) => natural(a.id, b.id)).map(cardHTML).join("")}</div>`).join("");
+    body = Object.keys(groups).sort().map(k => `<div class="group-h">${esc(k === "z" ? "Sans équipe (dépôt)" : teamLabel(+k))}</div><div class="list">${groups[k].sort(byAlert).map(cardHTML).join("")}</div>`).join("");
   } else body = `<div class="list">${list.sort((a, b) => natural(a.id, b.id)).map(cardHTML).join("")}</div>`;
   if (!list.length) body = `<div class="empty">Aucune machine ici.</div>`;
   const retired = off.length ? `<details class="retired"><summary>Machines retirées du parc (${off.length})</summary><div class="list">${off.sort((a, b) => natural(a.id, b.id)).map(cardHTML).join("")}</div></details>` : "";
   return header(f.nom, `${act.length} machine${act.length > 1 ? "s" : ""}`, { fam: fid }) +
-    `<main><div class="seg"><button data-act="sort" data-v="num" class="${famSort === "num" ? "on" : ""}">Par numéro</button><button data-act="sort" data-v="equipe" class="${famSort === "equipe" ? "on" : ""}">Par équipe</button></div>
-    ${statusChips(act, sel, `#/famille/${fid}`)}${body}<div class="addbar"><button class="btn light" data-act="add" data-fam="${fid}">+ Ajouter une ${esc(f.un.toLowerCase())}</button></div>${retired}</main>
-    <button class="fab" data-act="add" data-fam="${fid}" aria-label="Ajouter une machine">+</button>`;
+    `<main>${summaryHTML(act, `#/famille/${fid}?`)}<div class="seg"><button data-act="sort" data-v="num" class="${famSort === "num" ? "on" : ""}">Par numéro</button><button data-act="sort" data-v="equipe" class="${famSort === "equipe" ? "on" : ""}">Par équipe</button></div>
+    ${sel ? `<div class="filtre">Filtre : <b>${esc(sel === "attribuee" ? "Attribuées" : ST[sel].nom)}</b> <a href="#/famille/${fid}">✕ retirer</a></div>` : ""}${body}
+    <div class="addbar"><button class="btn light" data-act="add" data-fam="${fid}">+ Ajouter une ${esc(f.un.toLowerCase())}</button></div>${retired}</main>`;
 }
 
+function teamPannes(n) { return S.events.filter(e => (e.type === "probleme" || e.type === "hs") && e.equipe === n).length; }
 function viewEquipes() {
   const all = actives();
-  const nums = Object.keys(S.equipes).map(Number).sort((a, b) => a - b);
-  const cards = nums.map(n => {
-    const l = all.filter(m => m.equipe === n);
-    return `<a class="card" href="#/equipe/${n}" style="--c:var(--green)"><span class="body team"><span class="badge">${n}</span>
-      <span style="flex:1;min-width:0"><span class="num" style="font-size:18px">${esc(chef(n) || "Chef à indiquer")}</span><div class="where">${l.length} machine${l.length > 1 ? "s" : ""}</div>${barHTML(l)}</span></span></a>`;
+  const cards = teamNums().map(n => {
+    const l = all.filter(m => m.equipe === n).sort(byAlert), bad = l.filter(m => URGENTS.includes(m.statut)).length, p = teamPannes(n);
+    return `<a class="card" href="#/equipe/${n}" style="--c:${bad ? sc(l[0].statut) : "var(--green)"}"><span class="stripe"></span><span class="body team"><span class="badge">${n}</span>
+      <span style="flex:1;min-width:0"><span class="num" style="font-size:18px">${esc(chef(n) || "Chef à indiquer")}</span>
+      <div class="where">${l.length} machine${l.length > 1 ? "s" : ""}${bad ? ` · <b style="color:${sc(l[0].statut)}">${bad} en souci</b>` : ""}${p ? ` · ${p} panne${p > 1 ? "s" : ""} signalée${p > 1 ? "s" : ""} au total` : ""}</div>${barHTML(l)}</span></span></a>`;
   }).join("");
   const dep = all.filter(m => m.equipe == null);
-  return header("Par équipe", "Le matériel de chaque chef") + `<main><div class="list">${cards}
-    <a class="card" href="#/equipe/depot" style="--c:var(--s-disponible)"><span class="body team"><span class="badge depot">D</span>
+  return header("Les équipes", "Le matériel de chaque chef") + `<main><div class="list">${cards}
+    <a class="card" href="#/equipe/depot" style="--c:var(--s-disponible)"><span class="stripe"></span><span class="body team"><span class="badge depot">D</span>
       <span style="flex:1;min-width:0"><span class="num" style="font-size:18px">Sans équipe</span><div class="where">${dep.length} machine${dep.length > 1 ? "s" : ""} au dépôt ou en réparation</div>${barHTML(dep)}</span></span></a>
-  </div></main>`;
+  </div><div class="addbar"><button class="btn light" data-act="team-add">+ Ajouter une équipe</button></div></main>`;
 }
 function viewEquipe(id, q) {
   const isDep = id === "depot", n = isDep ? null : +id;
   const all = actives().filter(m => isDep ? m.equipe == null : m.equipe === n);
   const sel = q.get("statut");
-  const list = all.filter(m => !sel || m.statut === sel);
+  const list = all.filter(m => statMatch(m, sel));
   const fams = FAMILLES.map(f => ({ f, l: list.filter(m => m.famille === f.id).sort(byAlert) }))
     .sort((x, y) => (x.l.length ? prio(x.l[0]) : 99) - (y.l.length ? prio(y.l[0]) : 99));
-  const body = fams.map(({ f, l }) => {
-    return l.length ? `<div class="group-h"><span style="color:${fc(f.id)}">${ICONS[f.id]}</span>${esc(f.nom)} · ${l.length}</div><div class="list">${l.map(cardHTML).join("")}</div>` : "";
-  }).join("") || `<div class="empty">Aucune machine ici.</div>`;
+  const body = fams.map(({ f, l }) => l.length ? `<div class="group-h"><span style="color:${fc(f.id)}">${ICONS[f.id]}</span>${esc(f.nom)} · ${l.length}</div><div class="list">${l.map(cardHTML).join("")}</div>` : "").join("")
+    || `<div class="empty">Aucune machine ici.</div>`;
   const edit = isDep ? "" : `<button class="iconbtn" data-act="chef" data-n="${n}" aria-label="Changer le chef">✎</button>`;
   return header(isDep ? "Sans équipe" : `Équipe ${n}`, isDep ? "Au dépôt ou en réparation" : (chef(n) ? `Chef : ${chef(n)}` : "Chef à indiquer"), { right: edit }) +
-    `<main>${statusChips(all, sel, `#/equipe/${id}`)}${body}</main>`;
+    `<main>${summaryHTML(all, `#/equipe/${id}?`)}${sel ? `<div class="filtre">Filtre : <b>${esc(sel === "attribuee" ? "Attribuées" : ST[sel].nom)}</b> <a href="#/equipe/${id}">✕ retirer</a></div>` : ""}${body}</main>`;
 }
 function viewTout(q) {
   const sel = q.get("statut"), txt = norm((q.get("q") || "").trim());
   const all = actives();
-  const list = all.filter(m => (!sel || m.statut === sel) &&
-    (!txt || txt.split(/\s+/).every(w => norm([m.id, m.modele, m.modele.replace(/\s+/g, ""), FAM[m.famille] && FAM[m.famille].un, FAM[m.famille] && FAM[m.famille].nom, chef(m.equipe), m.equipe != null ? `equipe ${m.equipe}` : "sans equipe", ST[m.statut] && ST[m.statut].nom, LIEUX[m.lieu], m.reparateur, m.notes, m.motif].join(" ")).includes(w))))
+  const list = all.filter(m => statMatch(m, sel) &&
+    (!txt || txt.split(/\s+/).every(w => norm([m.id, m.modele, (m.modele || "").replace(/\s+/g, ""), FAM[m.famille] && FAM[m.famille].un, FAM[m.famille] && FAM[m.famille].nom,
+      chef(m.equipe), m.equipe != null ? `equipe ${m.equipe}` : "sans equipe", ST[m.statut] && ST[m.statut].nom, LIEUX[m.lieu], m.reparateur, m.depose_par, m.recupere_par, m.notes, m.motif].join(" ")).includes(w))))
     .sort(byAlert);
+  const base = `#/tout${txt ? `?q=${encodeURIComponent(q.get("q").trim())}` : ""}`;
   return header("Toutes les machines", `${all.length} machines`) +
     `<main><input class="search" id="search" type="search" placeholder="🔍 Code, modèle, chef, type de machine…" autocomplete="off" value="${esc(q.get("q") || "")}">
-    ${statusChips(all, sel, `#/tout${txt ? `?q=${encodeURIComponent(txt)}` : ""}`)}
+    ${statusChips(all, sel === "attribuee" ? "" : sel, base)}${sel === "attribuee" ? `<div class="filtre">Filtre : <b>Attribuées</b> <a href="${base}">✕ retirer</a></div>` : ""}
     <div class="list">${list.map(cardHTML).join("") || `<div class="empty">Aucune machine trouvée.</div>`}</div></main>`;
 }
 
+/* ----- fiche machine ----- */
+let DRAFT = null;   // corrections en cours (pas encore enregistrées)
+const dv = (m, f) => DRAFT && DRAFT.id === m.id && f in DRAFT.v ? DRAFT.v[f] : m[f];
+const EVT = {
+  probleme: { nom: "Problème signalé", c: "probleme" },
+  reparation: { nom: "Partie en réparation", c: "reparation" },
+  retour: { nom: "Revenue de réparation", c: "disponible" },
+  hs: { nom: "Déclarée HS", c: "hs" },
+};
+function eventsOf(id) { return S.events.filter(e => e.id === id).sort((a, b) => String(b.at).localeCompare(String(a.at))); }
+function eventsHTML(id) {
+  const ev = eventsOf(id);
+  if (!ev.length) return `<p class="muted">Aucune panne ni réparation enregistrée pour l'instant.</p>`;
+  const np = ev.filter(e => e.type === "probleme" || e.type === "hs").length, nr = ev.filter(e => e.type === "reparation").length;
+  const teams = {}; ev.filter(e => e.type === "probleme" || e.type === "hs").forEach(e => { const k = teamLabel(e.equipe); teams[k] = (teams[k] || 0) + 1; });
+  return `<div class="evsum"><span><b>${np}</b> panne${np > 1 ? "s" : ""}</span><span><b>${nr}</b> réparation${nr > 1 ? "s" : ""}</span></div>
+    ${Object.keys(teams).length ? `<p class="muted">Pannes par équipe : ${Object.entries(teams).map(([k, v]) => `${esc(k)} (${v})`).join(", ")}</p>` : ""}
+    <ul class="evlist">${ev.map(e => {
+      const t = EVT[e.type] || { nom: e.type, c: "hs" }, d = new Date(e.at);
+      const lines = [];
+      if (e.equipe != null && e.type !== "retour") lines.push(`Équipe : ${teamLabel(e.equipe)}`);
+      if (e.motif) lines.push(`Pourquoi : ${e.motif}`);
+      if (e.reparateur) lines.push(`Réparateur : ${e.reparateur}`);
+      if (e.depose_par) lines.push(`Déposée par ${e.depose_par}${e.depose_le ? ` le ${frDate(e.depose_le)}` : ""}`);
+      if (e.recupere_par || e.recupere_le) lines.push(`Récupérée${e.recupere_par ? ` par ${e.recupere_par}` : ""}${e.recupere_le ? ` le ${frDate(e.recupere_le)}` : ""}`);
+      if (e.duree != null) lines.push(`Durée chez le réparateur : ${e.duree} j`);
+      if (e.auteur) lines.push(`Noté par ${e.auteur}`);
+      return `<li style="--c:${sc(t.c)}"><div class="evtxt"><time>${d.toLocaleDateString("fr-FR")} à ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</time>
+        <b>${esc(t.nom)}</b>${lines.map(l => `<div>${esc(l)}</div>`).join("")}</div>${e.photo ? `<button class="thumb" data-act="zoom" data-key="${esc(e.photo)}"><img data-photo="${esc(e.photo)}" alt="Photo"></button>` : ""}</li>`;
+    }).join("")}</ul>`;
+}
 function viewMachine(id) {
   const m = S.machines[id];
   if (!m) return header("Machine introuvable") + `<main><div class="empty">Cette machine n'existe pas (ou plus).</div></main>`;
   const f = FAM[m.famille] || { un: m.famille };
-  const teamOpts = `<option value="">Sans équipe</option>` + Object.keys(S.equipes).map(Number).sort((a, b) => a - b)
-    .map(n => `<option value="${n}" ${m.equipe === n ? "selected" : ""}>${esc(teamLabel(n))}</option>`).join("");
-  const showRep = m.lieu === "reparateur" || m.statut === "reparation";
+  const lieu = dv(m, "lieu"), eq = dv(m, "equipe");
+  const teamOpts = `<option value="">Sans équipe</option>` + teamNums().map(n => `<option value="${n}" ${eq === n ? "selected" : ""}>${esc(teamLabel(n))}</option>`).join("");
+  const famOpts = FAMILLES.map(x => `<option value="${x.id}" ${dv(m, "famille") === x.id ? "selected" : ""}>${esc(x.un)}</option>`).join("");
+  const inp = (fld, label, type = "text", ph = "", list = "") => `<label class="f" for="f-${fld}">${label}</label><input class="inp" id="f-${fld}" ${type !== "text" ? `type="${type}"` : ""} ${list ? `list="${list}"` : ""} data-field="${fld}" value="${esc(dv(m, fld) || "")}" placeholder="${esc(ph)}">`;
+  const dirty = DRAFT && DRAFT.id === id && Object.keys(DRAFT.v).length;
   return header(`${m.id} · ${m.modele}`, f.un) + `<main>
     <div class="hero" style="--c:${sc(m.statut)}"><span class="fam">${ICONS[m.famille] || ""}</span>
       <div class="big">${esc(m.id)}</div><div class="mod">${esc(f.un)} ${esc(m.modele)}</div>
       <div class="st">${esc(ST[m.statut] ? ST[m.statut].nom : m.statut)}</div>
-      <div class="since">${esc(LIEUX[m.lieu] || "")}${m.lieu === "reparateur" && m.reparateur ? ` : ${esc(m.reparateur)}` : ""}${m.depuis ? ` · ${esc(sinceTxt(m.depuis))}` : ""}</div></div>
+      <div class="since">${esc(whereTxt(m))}</div>${m.motif && URGENTS.includes(m.statut) ? `<div class="since">« ${esc(m.motif)} »</div>` : ""}</div>
 
-    <div class="sect"><h3>Photo</h3><div class="photo" id="photo-box">${m.photo || pendingPhoto(m.id) ? "Chargement de la photo…" : "Pas encore de photo"}</div>
+    <div class="sect"><h3>Changer l'état</h3><div class="stgrid">
+      ${STATUTS.map(s => `<button class="stbtn ${m.statut === s.id ? "on" : ""}" style="--c:${sc(s.id)}" data-act="statut" data-v="${s.id}">${esc(s.nom)}</button>`).join("")}
+    </div><p class="muted" style="margin:10px 0 0">Une confirmation est demandée à chaque changement.</p></div>
+
+    <div class="sect"><h3>Photo</h3><div class="photo" id="photo-box" data-main="${esc(id)}">${m.photo || pendingPhoto(m.id, "main") ? "Chargement de la photo…" : "Pas encore de photo"}</div>
       <label class="btn light" style="text-align:center">📷 ${m.photo ? "Changer la photo" : "Ajouter une photo"}<input type="file" accept="image/*" id="photo-input" hidden></label></div>
 
-    <div class="sect"><h3>État de la machine</h3><div class="stgrid">
-      ${STATUTS.map(s => `<button class="stbtn ${m.statut === s.id ? "on" : ""}" style="--c:${sc(s.id)}" data-act="statut" data-v="${s.id}">${esc(s.nom)}</button>`).join("")}
-    </div></div>
+    <div class="sect"><h3>Historique des pannes et réparations</h3>${eventsHTML(id)}</div>
 
-    <div class="sect"><h3>Où est-elle ?</h3><div class="where3">
-      ${Object.entries(LIEUX).map(([k, v]) => `<button class="${m.lieu === k ? "on" : ""}" data-act="lieu" data-v="${k}">${esc(v)}</button>`).join("")}
-    </div>
-      <div class="${showRep ? "" : "hidden"}"><label class="f" for="f-rep">Nom du réparateur (entreprise)</label>
-        <input class="inp" id="f-rep" data-field="reparateur" value="${esc(m.reparateur)}" placeholder="Ex. : Motoculture Dupont"></div>
-      <div class="${showRep || m.depose_par || m.depose_le || m.recupere_le ? "" : "hidden"}">
-        <div class="two"><div><label class="f" for="f-dpar">Déposée par</label><input class="inp" id="f-dpar" list="noms" data-field="depose_par" value="${esc(m.depose_par)}" placeholder="Nom"></div>
-          <div><label class="f" for="f-dle">Déposée le</label><input class="inp" id="f-dle" type="date" data-field="depose_le" value="${esc(m.depose_le || "")}"></div></div>
-        <div class="two"><div><label class="f" for="f-rpar">Récupérée par</label><input class="inp" id="f-rpar" list="noms" data-field="recupere_par" value="${esc(m.recupere_par)}" placeholder="${showRep ? "Pas encore" : "Nom"}"></div>
-          <div><label class="f" for="f-rle">Récupérée le</label><input class="inp" id="f-rle" type="date" data-field="recupere_le" value="${esc(m.recupere_le || "")}"></div></div>
-        <datalist id="noms">${NOMS().map(n => `<option value="${esc(n)}">`).join("")}</datalist>
-      </div>
-      <label class="f" for="f-depuis">Depuis le</label>
-      <input class="inp" id="f-depuis" type="date" data-field="depuis" value="${esc(m.depuis || "")}">
-      <label class="f" for="f-motif">Pourquoi ? (panne, problème, raison)</label>
-      <textarea class="inp" id="f-motif" data-field="motif" placeholder="Ex. : ne démarre plus, lame cassée…">${esc(m.motif)}</textarea>
+    <div class="sect ${dirty ? "dirty" : ""}"><h3>Infos de la machine</h3><p class="muted" style="margin:0 0 4px">Pour corriger une erreur de saisie. Rien n'est changé tant que tu n'as pas appuyé sur « Enregistrer ».</p>
+      <label class="f" for="f-famille">Type de machine</label><select class="inp" id="f-famille" data-field="famille">${famOpts}</select>
+      ${inp("modele", "Modèle")}
+      <label class="f" for="f-equipe">Équipe responsable</label><select class="inp" id="f-equipe" data-field="equipe">${teamOpts}</select>
+      <label class="f">Où est-elle ?</label><div class="where3">${Object.entries(LIEUX).map(([k, v]) => `<button class="${lieu === k ? "on" : ""}" data-act="lieu" data-v="${k}">${esc(v)}</button>`).join("")}</div>
+      ${inp("reparateur", "Réparateur (entreprise)", "text", "Ex. : Motoculture Dupont")}
+      <div class="two"><div>${inp("depose_par", "Déposée par", "text", "Nom", "noms")}</div><div>${inp("depose_le", "Déposée le", "date")}</div></div>
+      <div class="two"><div>${inp("recupere_par", "Récupérée par", "text", "Nom", "noms")}</div><div>${inp("recupere_le", "Récupérée le", "date")}</div></div>
+      ${inp("depuis", "Dans cet état depuis le", "date")}
+      <label class="f" for="f-motif">Pourquoi ? (panne, problème, raison)</label><textarea class="inp" id="f-motif" data-field="motif">${esc(dv(m, "motif"))}</textarea>
+      ${inp("controle", "Dernier contrôle", "date")}
+      <label class="f" for="f-notes">Notes</label><textarea class="inp" id="f-notes" data-field="notes">${esc(dv(m, "notes"))}</textarea>
+      <datalist id="noms">${NOMS().map(n => `<option value="${esc(n)}">`).join("")}</datalist>
+      <p class="muted">Le numéro (${esc(m.id)}) ne se modifie pas : en cas d'erreur, retire la machine et recrée-la avec le bon numéro.</p>
     </div>
 
-    <div class="sect"><h3>Équipe responsable</h3>
-      <select class="inp" id="f-equipe" data-field="equipe">${teamOpts}</select>
-      <label class="f" for="f-controle">Dernier contrôle</label>
-      <input class="inp" id="f-controle" type="date" data-field="controle" value="${esc(m.controle || "")}">
-    </div>
-
-    <div class="sect"><h3>Infos</h3>
-      <label class="f" for="f-modele" style="margin-top:0">Modèle</label>
-      <input class="inp" id="f-modele" data-field="modele" value="${esc(m.modele)}">
-      <label class="f" for="f-notes">Notes</label>
-      <textarea class="inp" id="f-notes" data-field="notes">${esc(m.notes)}</textarea>
-    </div>
-
-    <div class="sect"><h3>Historique</h3><ul class="hist" id="hist"><li>Chargement…</li></ul></div>
+    <details class="sect journal"><summary><h3 style="display:inline">Journal de toutes les modifications</h3></summary><ul class="hist" id="hist"><li>Chargement…</li></ul></details>
 
     <button class="btn ${m.actif === false ? "light" : "danger"}" data-act="actif">${m.actif === false ? "Remettre dans le parc" : "Retirer du parc (vendue, perdue, détruite…)"}</button>
-  </main>`;
+  </main>
+  <div class="savebar ${dirty ? "" : "hidden"}" id="savebar"><span>Modifications non enregistrées</span><button class="btn light" data-act="draft-cancel">Annuler</button><button class="btn" data-act="draft-save">💾 Enregistrer</button></div>`;
 }
-const CHAMPS = { depose_par: "Déposée par", depose_le: "Déposée le", recupere_par: "Récupérée par", recupere_le: "Récupérée le", photo: "Photo", statut: "État", lieu: "Lieu", reparateur: "Réparateur", depuis: "Depuis", motif: "Pourquoi", equipe: "Équipe", controle: "Contrôle", modele: "Modèle", notes: "Notes", actif: "Dans le parc", affectation: "Affectation" };
+const CHAMPS = { depose_par: "Déposée par", depose_le: "Déposée le", recupere_par: "Récupérée par", recupere_le: "Récupérée le", photo: "Photo", statut: "État", lieu: "Lieu", reparateur: "Réparateur", depuis: "Depuis", motif: "Pourquoi", equipe: "Équipe", controle: "Contrôle", modele: "Modèle", notes: "Notes", actif: "Dans le parc", affectation: "Affectation", famille: "Type" };
 function histVal(c, v) {
   if (v == null || v === "") return "—";
   if (c === "statut") return ST[v] ? ST[v].nom : v;
   if (c === "lieu") return LIEUX[v] || v;
   if (c === "equipe") return teamLabel(+v);
   if (["depuis", "controle", "depose_le", "recupere_le"].includes(c)) return frDate(v);
-  if (c === "photo") return "nouvelle photo";
   if (c === "actif") return v === "true" ? "oui" : "non";
+  if (c === "photo") return "nouvelle photo";
   return v;
 }
 async function loadHist(id) {
   const ul = $("#hist"); if (!ul) return;
   if (!supa || !navigator.onLine) { ul.innerHTML = `<li>Visible quand il y a du réseau.</li>`; return; }
-  const { data, error } = await supa.from("historique").select("*").eq("machine_id", id).order("at", { ascending: false }).limit(40);
+  const { data, error } = await supa.from("historique").select("*").eq("machine_id", id).neq("champ", "evenement").order("at", { ascending: false }).limit(60);
   if (!$("#hist")) return;
-  if (error) { ul.innerHTML = `<li>Historique indisponible pour le moment.</li>`; return; }
+  if (error) { ul.innerHTML = `<li>Journal indisponible pour le moment.</li>`; return; }
   ul.innerHTML = (data || []).length ? data.map(h => {
     const d = new Date(h.at);
     return `<li><time>${d.toLocaleDateString("fr-FR")} à ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</time>${esc(CHAMPS[h.champ] || h.champ)} : ${esc(histVal(h.champ, h.ancien))} → <b>${esc(histVal(h.champ, h.nouveau))}</b></li>`;
@@ -421,7 +506,7 @@ async function loadHist(id) {
 
 function viewAjout(fid) {
   const f = FAM[fid] || FAMILLES[0];
-  const teamOpts = `<option value="">Sans équipe (au dépôt)</option>` + Object.keys(S.equipes).map(Number).sort((a, b) => a - b).map(n => `<option value="${n}">${esc(teamLabel(n))}</option>`).join("");
+  const teamOpts = `<option value="">Sans équipe (au dépôt)</option>` + teamNums().map(n => `<option value="${n}">${esc(teamLabel(n))}</option>`).join("");
   return header(`Ajouter : ${f.un}`, "Nouvelle machine", { fam: f.id }) + `<main><div class="sect">
     <label class="f" for="a-num" style="margin-top:0">Numéro interne (ex. : T14)</label><input class="inp" id="a-num" autocapitalize="characters" autocomplete="off">
     <label class="f" for="a-mod">Modèle (ex. : HRX 537)</label><input class="inp" id="a-mod" autocomplete="off">
@@ -429,17 +514,13 @@ function viewAjout(fid) {
     <div id="a-msg"></div><div style="height:14px"></div>
     <button class="btn" data-act="save-add" data-fam="${f.id}">Ajouter la machine</button></div></main>`;
 }
-function viewChef(n) {
-  return header(`Équipe ${n}`, "Chef d'équipe") + `<main><div class="sect">
-    <label class="f" for="c-nom" style="margin-top:0">Nom du chef de l'équipe ${n}</label><input class="inp" id="c-nom" value="${esc(chef(n))}" autocomplete="off">
-    <div style="height:14px"></div><button class="btn" data-act="save-chef" data-n="${n}">Enregistrer</button></div></main>`;
-}
 
 /* rendu principal (garde la position de défilement de chaque écran) */
 let pendingRender = false, focusSearch = false;
 function render(nav) {
   if (!USER) return;
-  const r = parseRoute(); current = r.key; const [a, b] = r.parts;
+  const r = parseRoute(); const [a, b] = r.parts;
+  if (nav && DRAFT && !(a === "machine" && b === DRAFT.id)) { /* on garde le brouillon pour le retour sur la fiche */ }
   let html;
   if (!a) html = viewHome();
   else if (a === "famille") html = viewFamille(b, r.q);
@@ -448,61 +529,126 @@ function render(nav) {
   else if (a === "tout") html = viewTout(r.q);
   else if (a === "machine") html = viewMachine(b);
   else if (a === "ajouter") html = viewAjout(b);
-  else if (a === "chef") html = viewChef(+b);
   else html = viewHome();
   const y = nav ? (scrolls[r.key] || 0) : window.scrollY;
   $("#app").innerHTML = html;
   window.scrollTo(0, y);
-  if (a === "machine") { if (nav) loadHist(b); showPhoto(b); }
+  if (a === "machine") { if (nav) loadHist(b); showPhotos(); }
   if (a === "tout" && focusSearch) { focusSearch = false; const s = $("#search"); if (s) { s.focus(); const n = s.value.length; try { s.setSelectionRange(n, n); } catch (_) {} } }
   pendingRender = false;
 }
-/* nouvelles données : on rafraîchit sans déranger quelqu'un en train d'écrire */
+/* nouvelles données : on rafraîchit sans déranger quelqu'un en train d'écrire ou de confirmer */
 function softRender() {
   const ae = document.activeElement;
-  if (ae && /INPUT|TEXTAREA|SELECT/.test(ae.tagName)) { pendingRender = true; return; }
+  if (MODAL || (ae && /INPUT|TEXTAREA|SELECT/.test(ae.tagName))) { pendingRender = true; return; }
   render(false);
-  const r = parseRoute(); if (r.parts[0] === "machine") loadHist(r.parts[1]);
+}
+
+/* ---------- changement d'état : confirmation + sous-champs ---------- */
+const photoField = (label) => `<label class="f">${label} <span class="muted">(facultatif)</span></label><label class="btn light pick" style="text-align:center">📷 <span id="m-photo-lbl">Prendre / choisir une photo</span><input type="file" accept="image/*" id="m-photo" hidden></label>`;
+function askStatut(id, v) {
+  const m = S.machines[id], s = ST[v], cur = m.statut;
+  if (v === cur && v !== "controle") return;
+  const leavingRep = cur === "reparation" && v !== "reparation";
+  const nomsList = `<datalist id="m-noms">${NOMS().map(n => `<option value="${esc(n)}">`).join("")}</datalist>`;
+  let html = `<p class="mq">Es-tu sûr que <b>${esc(m.id)}</b> (${esc(m.modele)}) <b style="color:${sc(v)}">${esc(s.q)}</b> ?</p>`;
+  if (v === "probleme" || v === "hs") html += `<label class="f" for="m-motif">Quel est le problème ?</label><textarea class="inp" id="m-motif" placeholder="Ex. : ne démarre plus, lame cassée…">${esc(m.motif)}</textarea>${photoField("Photo du problème")}`;
+  if (v === "reparation") html += `<label class="f" for="m-rep">Chez quel réparateur ?</label><input class="inp" id="m-rep" value="${esc(m.reparateur)}" placeholder="Ex. : Motoculture Dupont">
+    <div class="two"><div><label class="f" for="m-dpar">Déposée par</label><input class="inp" id="m-dpar" list="m-noms" value="${esc(myName())}"></div><div><label class="f" for="m-dle">Le</label><input class="inp" id="m-dle" type="date" value="${today()}"></div></div>
+    <label class="f" for="m-motif">Pourquoi ?</label><textarea class="inp" id="m-motif">${esc(m.motif)}</textarea>${photoField("Photo des pièces confiées au réparateur")}${nomsList}`;
+  if (leavingRep) html += `<div class="mnote">Elle revient de chez ${esc(m.reparateur || "le réparateur")}.</div><div class="two"><div><label class="f" for="m-rpar">Récupérée par</label><input class="inp" id="m-rpar" list="m-noms" value="${esc(myName())}"></div><div><label class="f" for="m-rle">Le</label><input class="inp" id="m-rle" type="date" value="${today()}"></div></div>${nomsList}`;
+  if (v === "operationnelle") html += `<label class="f" for="m-eq">Attribuée à quelle équipe ?</label><select class="inp" id="m-eq"><option value="">— Choisir —</option>${teamNums().map(n => `<option value="${n}" ${m.equipe === n ? "selected" : ""}>${esc(teamLabel(n))}</option>`).join("")}</select>`;
+  if (v === "disponible") html += `<div class="mnote">Elle sera notée <b>au dépôt</b>, libre pour une équipe (plus attribuée).</div>`;
+  if (v === "controle") html += `<label class="f" for="m-cdate">Date du contrôle</label><input class="inp" id="m-cdate" type="date" value="${today()}">`;
+  openModal({
+    title: `${esc(m.id)} : ${esc(s.nom)}`, html, ok: `Oui, ${s.nom.toLowerCase()}`, okColor: sc(v),
+    onOk: async () => {
+      const ch = { statut: v }, ev = {};
+      if (v !== cur) ch.depuis = today();
+      if (v === "probleme" || v === "hs") { ch.motif = mval("m-motif"); ev.motif = ch.motif; }
+      if (v === "reparation") {
+        Object.assign(ch, { lieu: "reparateur", reparateur: mval("m-rep"), depose_par: mval("m-dpar"), depose_le: mval("m-dle") || today(), recupere_par: "", recupere_le: null, motif: mval("m-motif") });
+        Object.assign(ev, { reparateur: ch.reparateur, depose_par: ch.depose_par, depose_le: ch.depose_le, motif: ch.motif });
+      }
+      if (v === "operationnelle") {
+        const e = mval("m-eq"); if (!e) { $("#m-msg").innerHTML = `<div class="msg err">Choisis l'équipe à qui elle est attribuée.</div>`; return false; }
+        ch.equipe = +e; ch.affectation = chef(+e); ch.lieu = "equipe";
+      }
+      if (v === "disponible") { ch.lieu = "depot"; ch.equipe = null; ch.affectation = ""; }
+      if (v === "controle") { ch.controle = mval("m-cdate") || today(); if (m.lieu === "reparateur") ch.lieu = m.equipe != null ? "equipe" : "depot"; }
+      if ((v === "probleme" || v === "hs") && m.lieu === "reparateur") ch.lieu = m.equipe != null ? "equipe" : "depot";
+      let retour = null;
+      if (leavingRep) {
+        ch.recupere_par = mval("m-rpar"); ch.recupere_le = mval("m-rle") || today();
+        retour = { reparateur: m.reparateur, recupere_par: ch.recupere_par, recupere_le: ch.recupere_le, duree: m.depose_le ? Math.max(0, Math.round((Date.parse(ch.recupere_le) - Date.parse(m.depose_le)) / 864e5)) : null };
+      }
+      const file = mfile("m-photo");
+      if (file) { try { ev.photo = await addPhoto(id, file, "ev"); } catch (e) {} }
+      if (retour) addEvent(id, "retour", retour);
+      if (EVT[v]) addEvent(id, v, ev);
+      setFields(id, ch);
+      return true;
+    },
+    onOpen: d => { const i = d.querySelector("#m-photo"); if (i) i.addEventListener("change", () => { if (i.files[0]) $("#m-photo-lbl").textContent = "✅ Photo ajoutée"; }); },
+  });
 }
 
 /* ---------- actions ---------- */
 document.addEventListener("click", async e => {
   const t = e.target.closest("[data-act]"); if (!t) return;
   const act = t.dataset.act, r = parseRoute();
-  if (act === "back") return back();
-  if (act === "logout") { if (Q.length) { alert(`Impossible de se déconnecter : ${Q.length} modification(s) pas encore envoyée(s). Attends d'avoir du réseau.`); return; } await supa.auth.signOut(); location.replace("#/"); location.reload(); return; }
-  if (act === "sort") { famSort = t.dataset.v; render(false); return; }
-  if (act === "add") return go(`#/ajouter/${t.dataset.fam}`);
-  if (act === "chef") return go(`#/chef/${t.dataset.n}`);
-  const id = r.parts[0] === "machine" ? r.parts[1] : null;
-  if (act === "statut" && id) {
-    const m = S.machines[id], v = t.dataset.v, ch = { statut: v };
-    if (v !== m.statut) ch.depuis = today();
-    if (v === "reparation" && m.statut !== "reparation") Object.assign(ch, { depose_le: today(), depose_par: "", recupere_par: "", recupere_le: null });
-    if (v !== "reparation" && m.statut === "reparation" && !m.recupere_le) ch.recupere_le = today();
-    if (v === "reparation") ch.lieu = "reparateur";
-    else if (v === "disponible") ch.lieu = "depot";
-    else if (v === "controle") ch.controle = today();
-    if (v !== "reparation" && m.lieu === "reparateur") ch.lieu = m.equipe != null ? "equipe" : "depot";
-    if (v === "operationnelle" && m.lieu === "depot" && m.equipe != null) ch.lieu = "equipe";
-    setFields(id, ch); render(false);
-    if (v === "reparation" && !S.machines[id].reparateur) setTimeout(() => { const i = $("#f-rep"); if (i) { i.focus(); i.scrollIntoView({ block: "center", behavior: "smooth" }); } }, 50);
+  if (act === "m-cancel") return closeModal();
+  if (act === "m-ok") {
+    if (!MODAL) return; t.disabled = true;
+    const ok = MODAL.onOk ? await MODAL.onOk() : true;
+    t.disabled = false;
+    if (ok !== false) { closeModal(true); render(false); }
     return;
   }
-  if (act === "lieu" && id) {
-    const m = S.machines[id], v = t.dataset.v, ch = { lieu: v };
-    if (v !== m.lieu) ch.depuis = today();
-    if (v === "reparateur") { ch.statut = "reparation"; if (m.statut !== "reparation") Object.assign(ch, { depose_le: today(), depose_par: "", recupere_par: "", recupere_le: null }); }
-    else if (m.statut === "reparation") { ch.statut = v === "depot" ? "disponible" : "operationnelle"; if (!m.recupere_le) ch.recupere_le = today(); }
-    setFields(id, ch); render(false);
-    if (v === "reparateur") setTimeout(() => { const i = $("#f-rep"); if (i) i.focus(); }, 50);
+  if (act === "back") return back();
+  if (act === "logout") {
+    if (Q.length || PHOTOS_WAIT.length) { openModal({ title: "Pas encore", html: `<p class="mq">Des modifications ou des photos ne sont pas encore envoyées. Attends d'avoir du réseau avant de te déconnecter.</p>`, ok: "Compris", cancel: "Fermer" }); return; }
+    openModal({ title: "Se déconnecter ?", html: `<p class="mq">Il faudra remettre ton e-mail et ton mot de passe pour revenir.</p>`, ok: "Oui, me déconnecter",
+      onOk: async () => { await supa.auth.signOut(); location.replace("#/"); location.reload(); return true; } });
+    return;
+  }
+  if (act === "sort") { famSort = t.dataset.v; render(false); return; }
+  if (act === "add") return go(`#/ajouter/${t.dataset.fam}`);
+  if (act === "zoom") { const url = await photoURL(t.dataset.key); if (url) openModal({ title: "Photo", html: `<img src="${url}" style="width:100%;border-radius:12px" alt="">`, ok: "Fermer", cancel: "Retour" }); return; }
+  if (act === "chef" || act === "team-add") {
+    const isNew = act === "team-add", n = isNew ? (Math.max(0, ...teamNums()) + 1) : +t.dataset.n;
+    openModal({
+      title: isNew ? "Nouvelle équipe" : `Équipe ${n}`,
+      html: `${isNew ? `<label class="f" for="m-tn">Numéro de l'équipe</label><input class="inp" id="m-tn" type="number" min="1" value="${n}">` : ""}<label class="f" for="m-chef">Nom du chef d'équipe</label><input class="inp" id="m-chef" value="${esc(isNew ? "" : chef(n))}" autocomplete="off">`,
+      ok: "💾 Enregistrer",
+      onOk: () => {
+        const num = isNew ? +mval("m-tn") : n, nom = mval("m-chef");
+        if (!num || num < 1) { $("#m-msg").innerHTML = `<div class="msg err">Indique un numéro d'équipe.</div>`; return false; }
+        if (isNew && S.equipes[num]) { $("#m-msg").innerHTML = `<div class="msg err">L'équipe ${num} existe déjà.</div>`; return false; }
+        setChef(num, nom); return true;
+      },
+    });
+    return;
+  }
+  const id = r.parts[0] === "machine" ? r.parts[1] : null;
+  if (act === "statut" && id) return askStatut(id, t.dataset.v);
+  if (act === "lieu" && id) { draftSet(id, "lieu", t.dataset.v); render(false); return; }
+  if (act === "draft-cancel") { DRAFT = null; render(false); return; }
+  if (act === "draft-save" && id && DRAFT && DRAFT.id === id) {
+    const m = S.machines[id], v = DRAFT.v, list = Object.keys(v).map(k => `<li>${esc(CHAMPS[k] || k)} : ${esc(histVal(k, m[k] == null ? "" : String(m[k])))} → <b>${esc(histVal(k, v[k] == null ? "" : String(v[k])))}</b></li>`).join("");
+    openModal({ title: `Enregistrer ${esc(id)} ?`, html: `<p class="mq">Tu vas modifier :</p><ul class="mlist">${list}</ul>`, ok: "💾 Oui, enregistrer",
+      onOk: () => { const ch = Object.assign({}, v); if ("equipe" in ch) ch.affectation = ch.equipe != null ? chef(ch.equipe) : ""; DRAFT = null; setFields(id, ch); return true; } });
     return;
   }
   if (act === "actif" && id) {
     const m = S.machines[id], off = m.actif !== false;
-    if (off && !confirm(`Retirer ${m.id} du parc ? Elle restera visible dans « Machines retirées » et pourra être remise.`)) return;
-    setFields(id, off ? { actif: false, statut: "hs", depuis: today() } : { actif: true, statut: "disponible", lieu: "depot", depuis: today() });
-    render(false); return;
+    openModal({
+      title: off ? `Retirer ${esc(m.id)} ?` : `Remettre ${esc(m.id)} ?`,
+      html: off ? `<p class="mq">Elle ne sera plus comptée dans le parc, mais restera visible dans « Machines retirées » et pourra être remise.</p>` : `<p class="mq">Elle reviendra dans le parc, disponible au dépôt.</p>`,
+      ok: off ? "Oui, retirer" : "Oui, remettre", okColor: off ? sc("probleme") : undefined,
+      onOk: () => { setFields(id, off ? { actif: false, statut: "hs", depuis: today() } : { actif: true, statut: "disponible", lieu: "depot", equipe: null, depuis: today() }); return true; },
+    });
+    return;
   }
   if (act === "save-add") {
     const num = $("#a-num").value.trim().toUpperCase().replace(/\s+/g, ""), mod = $("#a-mod").value.trim(), eqv = $("#a-eq").value;
@@ -513,107 +659,49 @@ document.addEventListener("click", async e => {
     addMachine({ id: num, famille: t.dataset.fam, modele: mod, equipe: eq, affectation: eq != null ? chef(eq) : "", statut: eq != null ? "operationnelle" : "disponible", lieu: eq != null ? "equipe" : "depot", depuis: today(), actif: true, ordre: 1000 });
     replaceTo(`#/machine/${encodeURIComponent(num)}`); return;
   }
-  if (act === "save-chef") { setChef(+t.dataset.n, $("#c-nom").value.trim()); back(); return; }
 });
-document.addEventListener("change", e => {
-  const el = e.target, fld = el.dataset && el.dataset.field; if (!fld) return;
-  const r = parseRoute(); if (r.parts[0] !== "machine") return;
-  let v = el.value;
-  if (fld === "equipe") v = v === "" ? null : +v;
-  if (["depuis", "controle", "depose_le", "recupere_le"].includes(fld)) v = v || null;
-  if (fld !== "equipe" && typeof v === "string") v = v.trim();
-  const ch = { [fld]: v };
-  if (fld === "equipe") { ch.affectation = v != null ? chef(v) : ""; const m = S.machines[r.parts[1]]; if (m.lieu === "equipe" && v == null) ch.lieu = "depot"; }
-  setFields(r.parts[1], ch);
-});
-document.addEventListener("focusout", () => { setTimeout(() => { if (pendingRender && !/INPUT|TEXTAREA|SELECT/.test((document.activeElement || {}).tagName || "")) softRender(); }, 100); });
-let searchT = null;
+function draftSet(id, fld, v) {
+  const m = S.machines[id];
+  if (!DRAFT || DRAFT.id !== id) DRAFT = { id, v: {} };
+  if ((m[fld] ?? null) === (v ?? null)) delete DRAFT.v[fld]; else DRAFT.v[fld] = v;
+  const bar = $("#savebar"); if (bar) bar.classList.toggle("hidden", !Object.keys(DRAFT.v).length);
+}
+function fieldValue(el) {
+  const fld = el.dataset.field; let v = el.value;
+  if (fld === "equipe") return v === "" ? null : +v;
+  if (["depuis", "controle", "depose_le", "recupere_le"].includes(fld)) return v || null;
+  return v.trim();
+}
 document.addEventListener("input", e => {
-  if (e.target.id === "home-search") { const v = e.target.value.trim(); if (v) { focusSearch = true; go(`#/tout?q=${encodeURIComponent(v)}`); } return; }
-  if (e.target.id !== "search") return;
+  const el = e.target;
+  if (el.dataset && el.dataset.field) { const r = parseRoute(); if (r.parts[0] === "machine") draftSet(r.parts[1], el.dataset.field, fieldValue(el)); return; }
+  if (el.id === "home-search") { const v = el.value.trim(); if (v) { focusSearch = true; go(`#/tout?q=${encodeURIComponent(v)}`); } return; }
+  if (el.id !== "search") return;
   clearTimeout(searchT);
   searchT = setTimeout(() => {
-    const r = parseRoute(), q = new URLSearchParams(r.q); const v = e.target.value.trim();
+    const r = parseRoute(), q = new URLSearchParams(r.q); const v = el.value.trim();
     if (v) q.set("q", v); else q.delete("q");
     const qs = q.toString(); history.replaceState(null, "", `#/tout${qs ? "?" + qs : ""}`);
-    const pos = e.target.selectionStart; render(false);
+    const pos = el.selectionStart; render(false);
     const s = $("#search"); if (s) { s.focus(); try { s.setSelectionRange(pos, pos); } catch (_) {} }
   }, 200);
 });
+let searchT = null;
+document.addEventListener("change", e => {
+  const el = e.target;
+  if (el.dataset && el.dataset.field) { const r = parseRoute(); if (r.parts[0] === "machine") draftSet(r.parts[1], el.dataset.field, fieldValue(el)); }
+});
+document.addEventListener("focusout", () => { setTimeout(() => { if (pendingRender && !MODAL && !/INPUT|TEXTAREA|SELECT/.test((document.activeElement || {}).tagName || "")) softRender(); }, 100); });
 
-/* ---------- connexion ---------- */
-const NEED_PWD = /type=(invite|recovery)/.test(location.hash);
-function viewLogin(mode, msg) {
-  $("#status").classList.add("hidden");
-  const pwd = mode === "pwd";
-  $("#app").innerHTML = `<div class="login"><div class="brand"><img src="icons/icon-192.png" alt=""><h1>ASDJ - Tools</h1><p class="sub">Au service des jardins</p></div>
-    <div class="sect">${pwd ? `<label class="f" for="lg-new" style="margin-top:0">Choisis ton mot de passe (8 caractères minimum)</label><input class="inp" id="lg-new" type="password" autocomplete="new-password">
-      <div style="height:14px"></div><button class="btn" id="lg-setpwd">Enregistrer mon mot de passe</button>`
-    : `<label class="f" for="lg-mail" style="margin-top:0">Adresse e-mail</label><input class="inp" id="lg-mail" type="email" autocomplete="username">
-      <label class="f" for="lg-pass">Mot de passe</label><input class="inp" id="lg-pass" type="password" autocomplete="current-password">
-      <div style="height:14px"></div><button class="btn" id="lg-go">Se connecter</button><button class="link" id="lg-forgot">Mot de passe oublié ?</button>`}
-    <div id="lg-msg">${msg ? `<div class="msg ${msg.err ? "err" : ""}">${esc(msg.t)}</div>` : ""}</div></div></div>`;
-  hideLoader();
-  if (pwd) {
-    $("#lg-setpwd").onclick = async () => {
-      const p = $("#lg-new").value; if (p.length < 8) { $("#lg-msg").innerHTML = `<div class="msg err">8 caractères minimum.</div>`; return; }
-      const { error } = await supa.auth.updateUser({ password: p });
-      if (error) { $("#lg-msg").innerHTML = `<div class="msg err">${esc(error.message)}</div>`; return; }
-      location.replace(location.pathname + "#/"); start();
-    };
-    return;
-  }
-  $("#lg-go").onclick = async () => {
-    const btn = $("#lg-go"); btn.disabled = true; btn.textContent = "Connexion…";
-    const { data, error } = await supa.auth.signInWithPassword({ email: $("#lg-mail").value.trim(), password: $("#lg-pass").value });
-    btn.disabled = false; btn.textContent = "Se connecter";
-    if (error) { $("#lg-msg").innerHTML = `<div class="msg err">${navigator.onLine ? "E-mail ou mot de passe incorrect." : "Pas de réseau : la première connexion demande internet."}</div>`; return; }
-    USER = data.user; start();
-  };
-  $("#lg-forgot").onclick = async () => {
-    const mail = $("#lg-mail").value.trim();
-    if (!mail) { $("#lg-msg").innerHTML = `<div class="msg err">Écris d'abord ton adresse e-mail au-dessus.</div>`; return; }
-    const { error } = await supa.auth.resetPasswordForEmail(mail, { redirectTo: location.origin + location.pathname });
-    $("#lg-msg").innerHTML = error ? `<div class="msg err">${esc(error.message)}</div>` : `<div class="msg">E-mail envoyé : ouvre le lien reçu pour choisir un nouveau mot de passe.</div>`;
-  };
-}
-
-/* ---------- démarrage ---------- */
-let loaderHidden = false;
-function hideLoader() { if (loaderHidden) return; loaderHidden = true; const l = $("#loader"); l.classList.add("fade"); setTimeout(() => l.remove(), 400); }
-let started = false, channel = null;
-async function start() {
-  if (started) { render(true); return; }
-  started = true;
-  if (!/^#\//.test(location.hash)) history.replaceState(null, "", location.pathname + "#/");
-  stack = [location.hash.slice(1) || "/"];
-  $("#status").classList.remove("hidden"); updateStatus(); await loadPhotoQueue(); sendPhotos();
-  const hasCache = Object.keys(S.machines).length > 0;
-  if (hasCache) render(true);
-  $("#loader-msg").textContent = "Synchronisation en cours…";
-  const timer = setTimeout(() => { if (hasCache) hideLoader(); }, 5000);
-  await flush();
-  const ok = await refresh();
-  clearTimeout(timer);
-  if (!ok && !hasCache) { $("#loader-msg").textContent = "Pas de réseau. Réessaie quand tu as internet."; setTimeout(() => location.reload(), 15000); return; }
-  render(true); hideLoader(); checkRobot();
-  // temps réel : les modifs de l'autre téléphone arrivent tout de suite
-  try {
-    channel = supa.channel("asdj")
-      .on("postgres_changes", { event: "*", schema: "public", table: "machines" }, p => { if (p.new && p.new.id) { mergeRow(p.new); saveLocal(); softRender(); } })
-      .on("postgres_changes", { event: "*", schema: "public", table: "equipes" }, p => { if (p.new && p.new.numero != null) { mergeEquipe(p.new); saveLocal(); softRender(); } })
-      .subscribe();
-  } catch (e) { console.warn("temps réel indisponible", e); }
-}
 /* ---------- photos : copie locale créée par l'appli, envoyée tout de suite, gardée en attente sans réseau ---------- */
-let PHOTOS_WAIT = [];   // [{key, id}] photos pas encore envoyées
+let PHOTOS_WAIT = [];   // [{key, id, kind}] photos pas encore envoyées
 const idb = (() => { let p; return () => p || (p = new Promise((ok, ko) => { const r = indexedDB.open("asdj", 1); r.onupgradeneeded = () => r.result.createObjectStore("photos"); r.onsuccess = () => ok(r.result); r.onerror = () => ko(r.error); })); })();
 async function idbDo(mode, fn) { const db = await idb(); return new Promise((ok, ko) => { const tx = db.transaction("photos", mode); const st = tx.objectStore("photos"); const rq = fn(st); tx.oncomplete = () => ok(rq && rq.result); tx.onerror = () => ko(tx.error); }); }
 const idbGet = k => idbDo("readonly", st => st.get(k));
 const idbPut = (k, v) => idbDo("readwrite", st => st.put(v, k));
 const idbAll = () => idbDo("readonly", st => st.getAll());
-async function loadPhotoQueue() { try { PHOTOS_WAIT = (await idbAll() || []).filter(p => !p.sent).map(p => ({ key: p.key, id: p.id })); } catch (e) { PHOTOS_WAIT = []; } updateStatus(); }
-const pendingPhoto = id => PHOTOS_WAIT.some(p => p.id === id);
+async function loadPhotoQueue() { try { PHOTOS_WAIT = (await idbAll() || []).filter(p => !p.sent).sort((a, b) => a.at - b.at).map(p => ({ key: p.key, id: p.id, kind: p.kind || "main" })); } catch (e) { PHOTOS_WAIT = []; } updateStatus(); }
+const pendingPhoto = (id, kind) => PHOTOS_WAIT.some(p => p.id === id && (!kind || p.kind === kind));
 function shrink(file) {
   return new Promise((ok, ko) => {
     const img = new Image(), url = URL.createObjectURL(file);
@@ -627,13 +715,15 @@ function shrink(file) {
     img.src = url;
   });
 }
-async function addPhoto(id, file) {
+async function addPhoto(id, file, kind = "main") {
   const blob = await shrink(file);
-  const key = `machines/${id}/${Date.now()}.jpg`;
-  await idbPut(key, { key, id, blob, sent: false, at: Date.now() });
-  PHOTOS_WAIT.push({ key, id }); updateStatus();
-  photoUrls[key] = URL.createObjectURL(blob); latestLocal[id] = key;
-  showPhoto(id); sendPhotos();
+  const key = `machines/${id}/${kind === "ev" ? "rep-" : ""}${Date.now()}.jpg`;
+  await idbPut(key, { key, id, kind, blob, sent: false, at: Date.now() });
+  PHOTOS_WAIT.push({ key, id, kind }); updateStatus();
+  photoUrls[key] = URL.createObjectURL(blob);
+  if (kind === "main") { latestLocal[id] = key; showPhotos(); }
+  setTimeout(sendPhotos, 50);
+  return key;
 }
 let sendingPhotos = false;
 async function sendPhotos() {
@@ -646,29 +736,36 @@ async function sendPhotos() {
       if (error) throw error;
       rec.sent = true; await idbPut(p.key, rec);   // la copie locale reste sur le téléphone
       PHOTOS_WAIT = PHOTOS_WAIT.filter(x => x.key !== p.key);
-      if (latestLocal[p.id] === p.key || !S.machines[p.id].photo) setFields(p.id, { photo: p.key });
+      if (p.kind === "main" && S.machines[p.id] && (latestLocal[p.id] === p.key || !S.machines[p.id].photo)) setFields(p.id, { photo: p.key });
     }
   } catch (e) { console.warn("photo en attente", e); }
-  finally { sendingPhotos = false; updateStatus(); }
+  finally { sendingPhotos = false; updateStatus(); showPhotos(); }
 }
 const photoUrls = {}, latestLocal = {};
 async function photoURL(key) {
   if (photoUrls[key]) return photoUrls[key];
   try { const rec = await idbGet(key); if (rec && rec.blob) return photoUrls[key] = URL.createObjectURL(rec.blob); } catch (e) {}
   if (!supa || !navigator.onLine) return null;
-  const { data, error } = await supa.storage.from("photos").download(key);   // une seule photo, à la demande
+  const { data, error } = await supa.storage.from("photos").download(key);   // une photo à la fois, seulement quand on l'affiche
   if (error || !data) return null;
-  try { await idbPut(key, { key, id: key.split("/")[1], blob: data, sent: true, at: Date.now() }); } catch (e) {}
+  try { await idbPut(key, { key, id: key.split("/")[1], kind: key.includes("/rep-") ? "ev" : "main", blob: data, sent: true, at: Date.now() }); } catch (e) {}
   return photoUrls[key] = URL.createObjectURL(data);
 }
-async function showPhoto(id) {
-  const box = $("#photo-box"); if (!box) return;
-  const m = S.machines[id]; const wait = PHOTOS_WAIT.filter(p => p.id === id).pop();
-  const key = latestLocal[id] || (wait && wait.key) || (m && m.photo); if (!key) return;
-  const url = await photoURL(key);
-  const b = $("#photo-box"); if (!b || parseRoute().parts[1] !== id) return;
-  b.innerHTML = url ? `<img src="${url}" alt="Photo de ${esc(id)}">${PHOTOS_WAIT.some(p => p.key === key) ? `<span class="wait">En attente d'envoi</span>` : ""}`
-    : "Photo visible quand il y a du réseau";
+async function showPhotos() {
+  const box = $("#photo-box");
+  if (box) {
+    const id = box.dataset.main, m = S.machines[id], wait = PHOTOS_WAIT.filter(p => p.id === id && p.kind === "main").pop();
+    const key = latestLocal[id] || (wait && wait.key) || (m && m.photo);
+    if (key) {
+      const url = await photoURL(key); const b = $("#photo-box");
+      if (b && b.dataset.main === id) b.innerHTML = url ? `<img src="${url}" alt="Photo de ${esc(id)}">${PHOTOS_WAIT.some(p => p.key === key) ? `<span class="wait">En attente d'envoi</span>` : ""}` : "Photo visible quand il y a du réseau";
+    }
+  }
+  for (const img of document.querySelectorAll("img[data-photo]")) {
+    if (img.src) continue;
+    const url = await photoURL(img.dataset.photo);
+    if (url) img.src = url; else img.alt = "hors ligne";
+  }
 }
 document.addEventListener("change", async e => {
   if (e.target.id !== "photo-input" || !e.target.files || !e.target.files[0]) return;
@@ -677,17 +774,96 @@ document.addEventListener("change", async e => {
   try { await addPhoto(r.parts[1], e.target.files[0]); } catch (err) { $("#photo-box").textContent = "Cette photo n'a pas pu être lue. Essaie une autre."; }
 });
 
+/* ---------- connexion ---------- */
+const NEED_PWD = /type=(invite|recovery)/.test(location.hash);
+function viewLogin(mode, msg) {
+  $("#status").classList.add("hidden");
+  const pwd = mode === "pwd", name = mode === "name";
+  $("#app").innerHTML = `<div class="login"><div class="brand"><img src="icons/icon-192.png" alt=""><h1>ASDJ - Tools</h1><p class="sub">Au service des jardins</p></div>
+    <div class="sect">${pwd ? `<label class="f" for="lg-new" style="margin-top:0">Choisis ton mot de passe (8 caractères minimum)</label><input class="inp" id="lg-new" type="password" autocomplete="new-password">
+      <div style="height:14px"></div><button class="btn" id="lg-setpwd">Enregistrer mon mot de passe</button>`
+    : name ? `<label class="f" for="lg-name" style="margin-top:0">Ton prénom (il apparaîtra dans l'historique)</label><input class="inp" id="lg-name" autocomplete="given-name">
+      <div style="height:14px"></div><button class="btn" id="lg-setname">Continuer</button>`
+    : `<label class="f" for="lg-mail" style="margin-top:0">Adresse e-mail</label><input class="inp" id="lg-mail" type="email" autocomplete="username">
+      <label class="f" for="lg-pass">Mot de passe</label><input class="inp" id="lg-pass" type="password" autocomplete="current-password">
+      <div style="height:14px"></div><button class="btn" id="lg-go">Se connecter</button><button class="link" id="lg-forgot">Mot de passe oublié ?</button>`}
+    <div id="lg-msg">${msg ? `<div class="msg ${msg.err ? "err" : ""}">${esc(msg.t)}</div>` : ""}</div></div></div>`;
+  hideLoader();
+  if (pwd) {
+    $("#lg-setpwd").onclick = async () => {
+      const p = $("#lg-new").value; if (p.length < 8) { $("#lg-msg").innerHTML = `<div class="msg err">8 caractères minimum.</div>`; return; }
+      const { data, error } = await supa.auth.updateUser({ password: p });
+      if (error) { $("#lg-msg").innerHTML = `<div class="msg err">${esc(error.message)}</div>`; return; }
+      USER = data.user; history.replaceState(null, "", location.pathname + "#/"); afterLogin();
+    };
+    return;
+  }
+  if (name) {
+    $("#lg-setname").onclick = async () => {
+      const n = $("#lg-name").value.trim(); if (!n) { $("#lg-msg").innerHTML = `<div class="msg err">Écris ton prénom.</div>`; return; }
+      const { data, error } = await supa.auth.updateUser({ data: { nom: n } });
+      if (error) { $("#lg-msg").innerHTML = `<div class="msg err">${navigator.onLine ? esc(error.message) : "Il faut du réseau pour cette étape."}</div>`; return; }
+      USER = data.user; start();
+    };
+    return;
+  }
+  $("#lg-go").onclick = async () => {
+    const btn = $("#lg-go"); btn.disabled = true; btn.textContent = "Connexion…";
+    const { data, error } = await supa.auth.signInWithPassword({ email: $("#lg-mail").value.trim(), password: $("#lg-pass").value });
+    btn.disabled = false; btn.textContent = "Se connecter";
+    if (error) { $("#lg-msg").innerHTML = `<div class="msg err">${navigator.onLine ? "E-mail ou mot de passe incorrect." : "Pas de réseau : la première connexion demande internet."}</div>`; return; }
+    USER = data.user; afterLogin();
+  };
+  $("#lg-forgot").onclick = async () => {
+    const mail = $("#lg-mail").value.trim();
+    if (!mail) { $("#lg-msg").innerHTML = `<div class="msg err">Écris d'abord ton adresse e-mail au-dessus.</div>`; return; }
+    const { error } = await supa.auth.resetPasswordForEmail(mail, { redirectTo: location.origin + location.pathname });
+    $("#lg-msg").innerHTML = error ? `<div class="msg err">${esc(error.message)}</div>` : `<div class="msg">E-mail envoyé : ouvre le lien reçu pour choisir un nouveau mot de passe.</div>`;
+  };
+}
+function afterLogin() { if (!myName()) viewLogin("name"); else start(); }
+
+/* ---------- démarrage ---------- */
+let loaderHidden = false;
+function hideLoader() { if (loaderHidden) return; loaderHidden = true; const l = $("#loader"); if (!l) return; l.classList.add("fade"); setTimeout(() => l.remove(), 400); }
+let started = false, channel = null;
+async function start() {
+  if (started) { render(true); return; }
+  started = true;
+  if (!/^#\//.test(location.hash)) history.replaceState(null, "", location.pathname + "#/");
+  stack = [location.hash.slice(1) || "/"];
+  $("#status").classList.remove("hidden"); updateStatus();
+  await loadPhotoQueue(); sendPhotos();
+  const hasCache = Object.keys(S.machines).length > 0;
+  if (hasCache) render(true);
+  const lm = $("#loader-msg"); if (lm) lm.textContent = "Synchronisation en cours…";
+  const timer = setTimeout(() => { if (hasCache) hideLoader(); }, 6000);
+  await flush();
+  const ok = await refresh();
+  clearTimeout(timer);
+  if (!ok && !hasCache) { const l2 = $("#loader-msg"); if (l2) l2.textContent = "Pas de réseau. Réessaie quand tu as internet."; setTimeout(() => location.reload(), 15000); return; }
+  render(true); hideLoader(); checkRobot();
+  // temps réel : les modifs de l'autre téléphone arrivent tout de suite
+  try {
+    channel = supa.channel("asdj")
+      .on("postgres_changes", { event: "*", schema: "public", table: "machines" }, p => { if (p.new && p.new.id) { mergeRow(p.new); saveLocal(); softRender(); } })
+      .on("postgres_changes", { event: "*", schema: "public", table: "equipes" }, p => { if (p.new && p.new.numero != null) { mergeEquipe(p.new); saveLocal(); softRender(); } })
+      .subscribe();
+  } catch (e) { console.warn("temps réel indisponible", e); }
+}
 // filets de sécurité : renvoi toutes les 30 s, au retour du réseau et au retour dans l'appli
 setInterval(() => { if (Q.length) flush(); if (PHOTOS_WAIT.length) sendPhotos(); }, 30000);
-setInterval(() => { if (document.visibilityState === "visible" && USER) refresh().then(ok => ok && softRender()); }, 120000);
-window.addEventListener("online", () => { updateStatus(); sendPhotos(); flush().then(() => refresh()).then(ok => ok && softRender()); });
+setInterval(() => { if (document.visibilityState === "visible" && USER && started) refresh().then(ok => ok && softRender()); }, 60000);
+window.addEventListener("online", () => { updateStatus(); if (!started) return; checkVersion().then(upd => { if (upd) return; sendPhotos(); flush().then(() => refresh()).then(ok => ok && softRender()); }); });
 window.addEventListener("offline", () => updateStatus());
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && USER) { checkRobot(); sendPhotos(); flush().then(() => refresh()).then(ok => ok && softRender()); }
+  if (document.visibilityState !== "visible" || !USER || !started) return;
+  checkVersion().then(upd => { if (upd) return; checkRobot(); sendPhotos(); flush().then(() => refresh()).then(ok => ok && softRender()); });
 });
 
 (async function init() {
   if (!window.supabase || !CFG) { $("#loader-msg").textContent = "Erreur de chargement. Ferme et rouvre l'appli."; return; }
+  if (await checkVersion()) return;   // une nouvelle version existe : on la charge avant tout
   supa = window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseKey, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
   supa.auth.onAuthStateChange((ev, session) => {
     if (ev === "PASSWORD_RECOVERY") viewLogin("pwd");
@@ -695,6 +871,6 @@ document.addEventListener("visibilitychange", () => {
   });
   const { data: { session } } = await supa.auth.getSession();
   if (NEED_PWD && session) { USER = session.user; viewLogin("pwd"); return; }
-  if (session && session.user) { USER = session.user; start(); }
+  if (session && session.user) { USER = session.user; afterLogin(); }
   else viewLogin("login");
 })();
