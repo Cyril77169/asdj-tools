@@ -394,7 +394,8 @@ function viewEquipe(id, q) {
     || `<div class="empty">Aucune machine ici.</div>`;
   const edit = isDep ? "" : `<button class="iconbtn" data-act="chef" data-n="${n}" aria-label="Changer le chef">✎</button>`;
   return header(isDep ? "Sans équipe" : `Équipe ${n}`, isDep ? "Au dépôt ou en réparation" : (chef(n) ? `Chef : ${chef(n)}` : "Chef à indiquer"), { right: edit }) +
-    `<main>${summaryHTML(all, `#/equipe/${id}?`)}${sel ? `<div class="filtre">Filtre : <b>${esc(sel === "attribuee" ? "Attribuées" : ST[sel].nom)}</b> <a href="#/equipe/${id}">✕ retirer</a></div>` : ""}${body}</main>`;
+    `<main>${summaryHTML(all, `#/equipe/${id}?`)}${sel ? `<div class="filtre">Filtre : <b>${esc(sel === "attribuee" ? "Attribuées" : ST[sel].nom)}</b> <a href="#/equipe/${id}">✕ retirer</a></div>` : ""}${body}
+    <div class="sect" style="margin-top:18px"><h3>Historique de l'équipe : pannes, réparations, prêts</h3>${teamHistHTML(n)}</div></main>`;
 }
 function viewTout(q) {
   const sel = q.get("statut"), txt = norm((q.get("q") || "").trim());
@@ -421,6 +422,31 @@ const EVT = {
   pret: { nom: "Prêtée", c: "controle" },
   rendu: { nom: "Rendue après prêt", c: "operationnelle" },
 };
+function evLines(e) {
+  const lines = [];
+  if (e.motif) lines.push(`Pourquoi : ${e.motif}`);
+  if (e.reparateur) lines.push(`Réparateur : ${e.reparateur}`);
+  if (e.pret_a) lines.push(`${e.type === "rendu" ? "Rendue par" : "Prêtée à"} ${e.pret_a}`);
+  if (e.depose_par) lines.push(`Déposée par ${e.depose_par}`);
+  if (e.recupere_par) lines.push(`Récupérée par ${e.recupere_par}`);
+  if (e.auteur) lines.push(`Noté par ${e.auteur}`);
+  return lines;
+}
+function teamHistHTML(n) {
+  const ev = S.events.filter(e => n === null ? e.equipe == null : e.equipe === n).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  if (!ev.length) return `<p class="muted">Rien d'enregistré pour l'instant.</p>`;
+  const np = ev.filter(e => e.type === "probleme" || e.type === "hs").length, nr = ev.filter(e => e.type === "reparation").length, npr = ev.filter(e => e.type === "pret").length;
+  const per = {}; ev.filter(e => e.type === "probleme" || e.type === "hs").forEach(e => per[e.id] = (per[e.id] || 0) + 1);
+  const top = Object.entries(per).sort((a, b) => b[1] - a[1]).filter(x => x[1] > 1);
+  return `<div class="evsum"><span><b>${np}</b> panne${np > 1 ? "s" : ""}</span><span><b>${nr}</b> réparation${nr > 1 ? "s" : ""}</span><span><b>${npr}</b> prêt${npr > 1 ? "s" : ""}</span></div>
+    ${top.length ? `<p class="muted">Machines qui tombent le plus en panne : ${top.map(([k, v]) => `<b>${esc(k)}</b> (${v})`).join(", ")}</p>` : ""}
+    <ul class="evlist">${ev.slice(0, 60).map(e => {
+      const t = EVT[e.type] || { nom: e.type, c: "hs" }, d = new Date(e.at), mm = S.machines[e.id];
+      return `<li style="--c:${sc(t.c)}"><a class="evtxt" href="#/machine/${encodeURIComponent(e.id)}"><time>${d.toLocaleDateString("fr-FR")} à ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</time>
+        <span class="evm">${mm ? `<span class="evic" style="color:${fc(mm.famille)}">${ICONS[mm.famille]}</span>` : ""}<b>${esc(e.id)}</b> · ${esc(t.nom)}</span>${evLines(e).map(l => `<div>${esc(l)}</div>`).join("")}</a>
+        ${e.photo ? `<button class="thumb" data-act="zoom" data-key="${esc(e.photo)}"><img data-photo="${esc(e.photo)}" alt="Photo"></button>` : ""}</li>`;
+    }).join("")}</ul>`;
+}
 function eventsOf(id) { return S.events.filter(e => e.id === id).sort((a, b) => String(b.at).localeCompare(String(a.at))); }
 function eventsHTML(id) {
   const ev = eventsOf(id);
@@ -463,8 +489,8 @@ function viewMachine(id) {
 
     <div class="sect"><h3>Changer l'état</h3><div class="stgrid">
       ${STATUTS.map(s => `<button class="stbtn ${m.statut === s.id ? "on" : ""}" style="--c:${sc(s.id)}" data-act="statut" data-v="${s.id}">${esc(s.nom)}</button>`).join("")}
-    </div><button class="btn pretbtn" data-act="pret">🤝 ${m.lieu === "pret" ? `Rendue ? (prêtée à ${esc(m.pret_a || "quelqu'un")})` : "Prêter cette machine"}</button>
-    <p class="muted" style="margin:10px 0 0">Une confirmation est demandée à chaque changement.</p></div>
+    </div><div class="stfoot"><span class="muted">Une confirmation est demandée à chaque changement.</span>
+      <button class="pretbtn ${m.lieu === "pret" ? "on" : ""}" data-act="pret">🤝 ${m.lieu === "pret" ? `Rendue ? (${esc(m.pret_a || "prêtée")})` : "Prêter"}</button></div></div>
 
     <div class="sect"><h3>Photo</h3><div class="photo" id="photo-box" data-main="${esc(id)}">${m.photo || pendingPhoto(m.id, "main") ? "Chargement de la photo…" : "Pas encore de photo"}</div>
       <label class="btn light" style="text-align:center">📷 ${m.photo ? "Changer la photo" : "Ajouter une photo"}<input type="file" accept="image/*" id="photo-input" hidden></label></div>
@@ -547,6 +573,7 @@ function render(nav) {
   $("#app").innerHTML = html;
   window.scrollTo(0, y);
   if (a === "machine") { if (nav) loadHist(b); showPhotos(); }
+  if (a === "equipe") showPhotos();
   if (a === "tout" && focusSearch) { focusSearch = false; const s = $("#search"); if (s) { s.focus(); const n = s.value.length; try { s.setSelectionRange(n, n); } catch (_) {} } }
   pendingRender = false;
 }
