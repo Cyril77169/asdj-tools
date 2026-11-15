@@ -3,6 +3,8 @@
 name: Modifier la base
 on:
   workflow_dispatch:
+  push:
+    paths: ['sql/a-lancer.sql']
 jobs:
   sql:
     runs-on: ubuntu-latest
