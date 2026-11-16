@@ -1,7 +1,7 @@
 /* ASDJ - Tools : suivi du matériel par famille et par équipe.
    Données partagées entre les comptes connectés (Supabase), copie locale + file d'attente pour le hors ligne. */
 "use strict";
-const APP_V = 3;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
+const APP_V = 4;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
 const CFG = window.APP_CONFIG;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -510,7 +510,8 @@ function viewMachine(id) {
       <button class="pretbtn ${m.lieu === "pret" ? "on" : ""}" data-act="pret">🤝 ${m.lieu === "pret" ? `Rendue ? (${esc(m.pret_a || "prêtée")})` : "Prêter"}</button></div></div>
 
     <div class="sect"><h3>Photo</h3><div class="photo" id="photo-box" data-main="${esc(id)}">${m.photo || pendingPhoto(m.id, "main") ? "Chargement de la photo…" : "Pas encore de photo"}</div>
-      <label class="btn light" style="text-align:center">📷 ${m.photo ? "Changer la photo" : "Ajouter une photo"}<input type="file" accept="image/*" id="photo-input" hidden></label></div>
+      <div class="pickrow"><label class="btn light">📷 Prendre une photo<input type="file" accept="image/*" capture="environment" id="photo-cam" hidden></label>
+      <label class="btn light">🖼️ Galerie<input type="file" accept="image/*" id="photo-input" hidden></label></div></div>
 
     <div class="sect"><h3>Historique : pannes, réparations, prêts</h3>${eventsHTML(id)}</div>
 
@@ -602,7 +603,9 @@ function softRender() {
 }
 
 /* ---------- changement d'état : confirmation + sous-champs ---------- */
-const photoField = (label) => `<label class="f">${label} <span class="muted">(facultatif)</span></label><label class="btn light pick" style="text-align:center">📷 <span id="m-photo-lbl">Prendre / choisir une photo</span><input type="file" accept="image/*" id="m-photo" hidden></label>`;
+const photoField = (label) => `<label class="f">${label} <span class="muted">(facultatif)</span></label>
+  <div class="pickrow"><label class="btn light">📷 Prendre une photo<input type="file" accept="image/*" capture="environment" class="m-photo" hidden></label>
+  <label class="btn light">🖼️ Galerie<input type="file" accept="image/*" class="m-photo" hidden></label></div><div class="muted" id="m-photo-lbl"></div>`;
 function askStatut(id, v) {
   const m = S.machines[id], s = ST[v], cur = m.statut;
   if (v === cur && v !== "controle") return;
@@ -639,14 +642,14 @@ function askStatut(id, v) {
         ch.recupere_par = mval("m-rpar"); ch.recupere_le = mval("m-rle") || today();
         retour = { reparateur: m.reparateur, recupere_par: ch.recupere_par, recupere_le: ch.recupere_le, duree: m.depose_le ? Math.max(0, Math.round((Date.parse(ch.recupere_le) - Date.parse(m.depose_le)) / 864e5)) : null };
       }
-      const file = mfile("m-photo");
+      const file = MODAL && MODAL.el.__file;
       if (file) { try { ev.photo = await addPhoto(id, file, "ev"); } catch (e) {} }
       if (retour) addEvent(id, "retour", retour);
       if (EVT[v]) addEvent(id, v, ev);
       setFields(id, ch);
       return true;
     },
-    onOpen: d => { const i = d.querySelector("#m-photo"); if (i) i.addEventListener("change", () => { if (i.files[0]) $("#m-photo-lbl").textContent = "✅ Photo ajoutée"; }); },
+    onOpen: d => { d.querySelectorAll(".m-photo").forEach(i => i.addEventListener("change", () => { if (i.files[0]) { d.__file = i.files[0]; $("#m-photo-lbl").textContent = "✅ Photo ajoutée"; } })); },
   });
 }
 
@@ -866,7 +869,7 @@ async function showPhotos() {
   }
 }
 document.addEventListener("change", async e => {
-  if (e.target.id !== "photo-input" || !e.target.files || !e.target.files[0]) return;
+  if (!["photo-input", "photo-cam"].includes(e.target.id) || !e.target.files || !e.target.files[0]) return;
   const r = parseRoute(); if (r.parts[0] !== "machine") return;
   $("#photo-box").textContent = "Préparation de la photo…";
   try { await addPhoto(r.parts[1], e.target.files[0]); } catch (err) { $("#photo-box").textContent = "Cette photo n'a pas pu être lue. Essaie une autre."; }
