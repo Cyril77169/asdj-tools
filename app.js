@@ -1,7 +1,7 @@
 /* ASDJ - Tools : suivi du matériel par famille et par équipe.
    Données partagées entre les comptes connectés (Supabase), copie locale + file d'attente pour le hors ligne. */
 "use strict";
-const APP_V = 7;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
+const APP_V = 8;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
 const CFG = window.APP_CONFIG;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -24,13 +24,15 @@ const STATUTS = [
   { id: "probleme", nom: "Problème technique", q: "a un problème technique" },
   { id: "reparation", nom: "En réparation", q: "part en réparation" },
   { id: "hs", nom: "HS", q: "est HS (hors service)" },
-  { id: "disponible", nom: "Disponible", q: "est disponible au dépôt" },
+  { id: "disponible", nom: "Dépôt", q: "retourne au dépôt (disponible, sans équipe)" },
   { id: "controle", nom: "Contrôle fait", q: "a été contrôlée" },
   { id: "operationnelle", nom: "Opérationnelle", q: "est opérationnelle" },
 ];
 const ST = Object.fromEntries(STATUTS.map(s => [s.id, s]));
 const URGENTS = ["probleme", "reparation", "hs"];
 const ATTRIB = ["operationnelle", "controle"];
+/* état affiché : une machine sans équipe (et sans souci) est au Dépôt (bleu) ; avec une équipe, elle est Attribuée */
+const eff = m => URGENTS.includes(m.statut) ? m.statut : m.equipe == null ? "disponible" : (m.statut === "disponible" ? "operationnelle" : m.statut);
 const LIEUX = { depot: "Au dépôt", equipe: "Avec l'équipe", reparateur: "Chez le réparateur", pret: "Prêtée" };
 const PRIO = { probleme: 0, reparation: 1, hs: 2, disponible: 3, controle: 4, operationnelle: 5 };
 const sc = id => `var(--s-${id})`;
@@ -88,7 +90,7 @@ const chef = n => (S.equipes[n] && S.equipes[n].chef) || "";
 const teamLabel = n => n == null || n === "" ? "Dépôt" : `Équipe ${n}` + (chef(n) ? ` · ${chef(n)}` : "");
 const natural = (a, b) => a.localeCompare(b, "fr", { numeric: true });
 const norm = t => String(t ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
-const prio = m => PRIO[m.statut] ?? 9;
+const prio = m => PRIO[eff(m)] ?? 9;
 const byAlert = (a, b) => prio(a) - prio(b) || natural(a.id, b.id);
 const actives = () => Object.values(S.machines).filter(m => m.actif !== false);
 const teamNums = () => Object.keys(S.equipes).map(Number).sort((a, b) => a - b);
@@ -116,14 +118,14 @@ const evAnnul = e => e && e._hid && S.annul[e._hid];
 const ANN = {};      // ligne annulée → { par, at } (vu dans les listes chargées)
 const HROWS = {};    // lignes d'historique affichées (pour le menu ⋯)
 const disp = m => noNum(m) ? "Sans n°" : (m.id || m);
-const statMatch = (m, sel) => !sel || (sel === "attribuee" ? ATTRIB.includes(m.statut) : m.statut === sel);
+const statMatch = (m, sel) => !sel || (sel === "attribuee" ? ATTRIB.includes(eff(m)) : eff(m) === sel);
 function whereTxt(m) {
   if (m.statut === "reparation" || m.lieu === "reparateur") return `Chez ${m.reparateur || "le réparateur"}` + ((m.depose_le || m.depuis) ? ` · ${sinceTxt(m.depose_le || m.depuis)}` : "") + (m.depose_par ? ` · déposée par ${m.depose_par}` : "");
   if (m.lieu === "pret") return `Prêtée à ${m.pret_a || "quelqu'un"}` + (m.pret_le ? ` · ${sinceTxt(m.pret_le)}` : "") + (m.equipe != null ? ` · ${teamLabel(m.equipe)}` : "");
   if (m.lieu === "depot") return "Au dépôt" + (m.equipe != null ? ` · ${teamLabel(m.equipe)}` : "") + (m.statut !== "operationnelle" && m.depuis ? ` · ${sinceTxt(m.depuis)}` : "");
   return teamLabel(m.equipe) + (["probleme", "hs"].includes(m.statut) && m.depuis ? ` · ${sinceTxt(m.depuis)}` : "");
 }
-function countBy(list) { const c = {}; STATUTS.forEach(s => c[s.id] = 0); list.forEach(m => c[m.statut] = (c[m.statut] || 0) + 1); return c; }
+function countBy(list) { const c = {}; STATUTS.forEach(s => c[s.id] = 0); list.forEach(m => { const k = eff(m); c[k] = (c[k] || 0) + 1; }); return c; }
 function barHTML(list) {
   const c = countBy(list), tot = list.length || 1;
   return `<div class="bar">${STATUTS.filter(s => c[s.id]).map(s => `<i style="width:${c[s.id] / tot * 100}%;background:${sc(s.id)}"></i>`).join("")}</div>`;
@@ -422,16 +424,16 @@ function header(title, sub, opts = {}) {
   return `<header class="top"><div class="row">${left}${famIc}<h1>${esc(title)}${sub ? `<small>${esc(sub)}</small>` : ""}</h1>${opts.right || ""}</div></header>`;
 }
 function cardHTML(m) {
-  return `<a class="card ${m.actif === false ? "off" : ""}" href="#/machine/${encodeURIComponent(m.id)}" style="--c:${sc(m.statut)}">
+  return `<a class="card ${m.actif === false ? "off" : ""}" href="#/machine/${encodeURIComponent(m.id)}" style="--c:${sc(eff(m))}">
     <span class="stripe"></span>
     <span class="body"><span class="num ${noNum(m) ? "nonum" : ""}">${esc(disp(m))}</span><span class="mod">${esc(m.modele)}</span><div class="where">${esc(whereTxt(m))}</div></span>
-    <span class="side"><span class="pill">${esc(ST[m.statut] ? ST[m.statut].nom : m.statut)}</span></span></a>`;
+    <span class="side"><span class="pill">${esc(ST[eff(m)] ? ST[eff(m)].nom : m.statut)}</span></span></a>`;
 }
 function summaryHTML(list, base) {
   const c = countBy(list), att = c.operationnelle + c.controle;
   const cell = (id, n, label, big) => `<a class="sum ${big ? "big" : ""} ${n ? "" : "zero"}" href="${base}statut=${id}" style="--c:${id === "attribuee" ? sc("operationnelle") : sc(id)}"><b>${n}</b><span>${esc(label)}</span></a>`;
   return `<div class="summary"><div class="sumrow two">${cell("probleme", c.probleme, c.probleme > 1 ? "Problèmes techniques" : "Problème technique", true)}${cell("reparation", c.reparation, "En réparation", true)}</div>
-    <div class="sumrow three">${cell("disponible", c.disponible, c.disponible > 1 ? "Disponibles" : "Disponible")}${cell("attribuee", att, att > 1 ? "Attribuées" : "Attribuée")}${cell("hs", c.hs, "HS")}</div></div>`;
+    <div class="sumrow three">${cell("disponible", c.disponible, "Dépôt")}${cell("attribuee", att, att > 1 ? "Attribuées" : "Attribuée")}${cell("hs", c.hs, "HS")}</div></div>`;
 }
 
 function viewHome() {
@@ -518,7 +520,7 @@ function viewTout(q) {
   const all = actives();
   const list = all.filter(m => statMatch(m, sel) &&
     (!txt || txt.split(/\s+/).every(w => norm([m.id, m.modele, (m.modele || "").replace(/\s+/g, ""), FAM[m.famille] && FAM[m.famille].un, FAM[m.famille] && FAM[m.famille].nom,
-      chef(m.equipe), m.equipe != null ? `equipe ${m.equipe}` : "depot sans equipe", noNum(m) ? "sans numero sans n" : "", ST[m.statut] && ST[m.statut].nom, LIEUX[m.lieu], m.reparateur, m.depose_par, m.recupere_par, m.pret_a, m.lieu === "pret" ? "pretee pret" : "", m.notes, m.motif].join(" ")).includes(w))))
+      chef(m.equipe), m.equipe != null ? `equipe ${m.equipe}` : "depot sans equipe", noNum(m) ? "sans numero sans n" : "", ST[eff(m)] && ST[eff(m)].nom, LIEUX[m.lieu], m.reparateur, m.depose_par, m.recupere_par, m.pret_a, m.lieu === "pret" ? "pretee pret" : "", m.notes, m.motif].join(" ")).includes(w))))
     .sort(byAlert);
   const base = `#/tout${txt ? `?q=${encodeURIComponent(q.get("q").trim())}` : ""}`;
   return header("Toutes les machines", `${all.length} machines`) +
@@ -605,13 +607,13 @@ function viewMachine(id) {
   const otherDraft = DRAFT && DRAFT.id !== id && Object.keys(DRAFT.v).length && S.machines[DRAFT.id];
   return header(`${disp(m)} · ${m.modele}`, f.un) + `<main>
     ${otherDraft ? `<a class="draftwarn" href="#/machine/${encodeURIComponent(DRAFT.id)}">⚠️ Corrections non enregistrées sur <b>${esc(disp(otherDraft))}</b> : touche ici pour les valider.</a>` : ""}
-    <div class="hero" style="--c:${sc(m.statut)}"><span class="fam">${ICONS[m.famille] || ""}</span>
+    <div class="hero" style="--c:${sc(eff(m))}"><span class="fam">${ICONS[m.famille] || ""}</span>
       <div class="big">${esc(disp(m))}</div><div class="mod">${esc(f.un)} ${esc(m.modele)}</div>
-      <div class="st">${esc(ST[m.statut] ? ST[m.statut].nom : m.statut)}</div>
+      <div class="st">${esc(ST[eff(m)] ? ST[eff(m)].nom : m.statut)}</div>
       <div class="since">${esc(whereTxt(m))}</div>${m.motif && URGENTS.includes(m.statut) ? `<div class="since">« ${esc(m.motif)} »</div>` : ""}</div>
 
     <div class="sect"><h3>Changer l'état</h3><div class="stgrid">
-      ${STATUTS.map(s => `<button class="stbtn ${m.statut === s.id ? "on" : ""}" style="--c:${sc(s.id)}" data-act="statut" data-v="${s.id}">${esc(s.nom)}</button>`).join("")}
+      ${STATUTS.map(s => `<button class="stbtn ${eff(m) === s.id ? "on" : ""}" style="--c:${sc(s.id)}" data-act="statut" data-v="${s.id}">${esc(s.nom)}</button>`).join("")}
     </div><div class="stfoot"><span class="muted">Une confirmation est demandée à chaque changement.</span>
       <button class="pretbtn ${m.lieu === "pret" ? "on" : ""}" data-act="pret">🤝 ${m.lieu === "pret" ? `Rendue ? (${esc(m.pret_a || "prêtée")})` : "Prêter"}</button></div></div>
 
@@ -907,7 +909,7 @@ const photoField = (label) => `<label class="f">${label} <span class="muted">(fa
   <label class="btn light">🖼️ Galerie<input type="file" accept="image/*" class="m-photo" hidden></label></div><div class="muted" id="m-photo-lbl"></div>`;
 function askStatut(id, v) {
   const m = S.machines[id], s = ST[v], cur = m.statut;
-  if (v === cur && v !== "controle") return;
+  if ((v === cur || v === eff(m)) && v !== "controle" && !(v === "operationnelle" && m.equipe == null)) return;
   const leavingRep = cur === "reparation" && v !== "reparation";
   const nomsList = `<datalist id="m-noms">${NOMS().map(n => `<option value="${esc(n)}">`).join("")}</datalist>`;
   let html = `<p class="mq">Es-tu sûr que <b>${esc(m.id)}</b> (${esc(m.modele)}) <b style="color:${sc(v)}">${esc(s.q)}</b> ?</p>`;
