@@ -563,9 +563,9 @@ async function loadHist(id) {
 
 function viewAjout(fid) {
   const f = FAM[fid] || FAMILLES[0];
-  const teamOpts = `<option value="">Sans équipe (au dépôt)</option>` + teamNums().map(n => `<option value="${n}">${esc(teamLabel(n))}</option>`).join("");
+  const teamOpts = `<option value="">Au dépôt (en stock, sans équipe)</option>` + teamNums().map(n => `<option value="${n}">${esc(teamLabel(n))}</option>`).join("");
   return header(`Ajouter : ${f.un}`, "Nouvelle machine", { fam: f.id }) + `<main><div class="sect">
-    <label class="f" for="a-num" style="margin-top:0">Numéro interne (ex. : ${({ tondeuse: "T14", debroussailleuse: "D08", souffleur: "S08", taillehaie: "TH08", tronconneuse: "TR11", autoportee: "A01", motoculteur: "MC01", scarificateur: "SC01", outillage: "OU01" })[f.id] || "X01"})</label><input class="inp" id="a-num" autocapitalize="characters" autocomplete="off">
+    <label class="f" for="a-num" style="margin-top:0">Numéro interne <span class="muted">(laisse vide : l'appli en donne un)</span> (ex. : ${({ tondeuse: "T14", debroussailleuse: "D08", souffleur: "S08", taillehaie: "TH08", tronconneuse: "TR11", autoportee: "A01", motoculteur: "MC01", scarificateur: "SC01", outillage: "OU01" })[f.id] || "X01"})</label><input class="inp" id="a-num" autocapitalize="characters" autocomplete="off">
     <label class="f" for="a-mod">Modèle (ex. : HRX 537)</label><input class="inp" id="a-mod" autocomplete="off">
     <label class="f" for="a-eq">Équipe</label><select class="inp" id="a-eq">${teamOpts}</select>
     <div id="a-msg"></div><div style="height:14px"></div>
@@ -751,15 +751,21 @@ document.addEventListener("click", async e => {
     return;
   }
   if (act === "save-add") {
-    const num = $("#a-num").value.trim().toUpperCase().replace(/\s+/g, ""), mod = $("#a-mod").value.trim(), eqv = $("#a-eq").value;
+    let num = $("#a-num").value.trim().toUpperCase().replace(/\s+/g, ""); const mod = $("#a-mod").value.trim(), eqv = $("#a-eq").value;
     const msg = $("#a-msg");
-    if (!num) { msg.innerHTML = `<div class="msg err">Indique le numéro interne.</div>`; return; }
+    if (!num) num = nextNum(t.dataset.fam);   // pas de numéro : on prend le suivant de la catégorie
     if (S.machines[num]) { msg.innerHTML = `<div class="msg err">Le numéro ${esc(num)} existe déjà.</div>`; return; }
     const eq = eqv === "" ? null : +eqv;
     addMachine({ id: num, famille: t.dataset.fam, modele: mod, equipe: eq, affectation: eq != null ? chef(eq) : "", statut: eq != null ? "operationnelle" : "disponible", lieu: eq != null ? "equipe" : "depot", depuis: today(), actif: true, ordre: 1000 });
     replaceTo(`#/machine/${encodeURIComponent(num)}`); return;
   }
 });
+const PREFIX = { tondeuse: "T", debroussailleuse: "D", souffleur: "S", taillehaie: "TH", tronconneuse: "TR", autoportee: "A", motoculteur: "MC", scarificateur: "SC", outillage: "OU" };
+function nextNum(fam) {
+  const p = PREFIX[fam] || "X", re = new RegExp(`^${p}(\\d+)$`);
+  const max = Math.max(0, ...Object.keys(S.machines).map(k => (k.match(re) || [])[1]).filter(Boolean).map(Number));
+  return p + String(max + 1).padStart(2, "0");
+}
 function draftSet(id, fld, v) {
   const m = S.machines[id];
   if (!DRAFT || DRAFT.id !== id) DRAFT = { id, v: {} };
