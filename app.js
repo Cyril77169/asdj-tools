@@ -1,7 +1,7 @@
 /* ASDJ - Tools : suivi du matériel par famille et par équipe.
    Données partagées entre les comptes connectés (Supabase), copie locale + file d'attente pour le hors ligne. */
 "use strict";
-const APP_V = 5;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
+const APP_V = 6;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
 const CFG = window.APP_CONFIG;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -541,7 +541,9 @@ function viewMachine(id) {
   const famOpts = FAMILLES.map(x => `<option value="${x.id}" ${dv(m, "famille") === x.id ? "selected" : ""}>${esc(x.un)}</option>`).join("");
   const inp = (fld, label, type = "text", ph = "", list = "") => `<label class="f" for="f-${fld}">${label}</label><input class="inp" id="f-${fld}" ${type !== "text" ? `type="${type}"` : ""} ${list ? `list="${list}"` : ""} data-field="${fld}" value="${esc(dv(m, fld) || "")}" placeholder="${esc(ph)}">`;
   const dirty = DRAFT && DRAFT.id === id && Object.keys(DRAFT.v).length;
+  const otherDraft = DRAFT && DRAFT.id !== id && Object.keys(DRAFT.v).length && S.machines[DRAFT.id];
   return header(`${disp(m)} · ${m.modele}`, f.un) + `<main>
+    ${otherDraft ? `<a class="draftwarn" href="#/machine/${encodeURIComponent(DRAFT.id)}">⚠️ Corrections non enregistrées sur <b>${esc(disp(otherDraft))}</b> : touche ici pour les valider.</a>` : ""}
     <div class="hero" style="--c:${sc(m.statut)}"><span class="fam">${ICONS[m.famille] || ""}</span>
       <div class="big">${esc(disp(m))}</div><div class="mod">${esc(f.un)} ${esc(m.modele)}</div>
       <div class="st">${esc(ST[m.statut] ? ST[m.statut].nom : m.statut)}</div>
@@ -842,8 +844,21 @@ function nextNum(fam) {
   const max = Math.max(0, ...Object.keys(S.machines).map(k => (k.match(re) || [])[1]).filter(Boolean).map(Number));
   return p + String(max + 1).padStart(2, "0");
 }
+function draftBlocked(id) {
+  if (!DRAFT || DRAFT.id === id || !Object.keys(DRAFT.v).length || !S.machines[DRAFT.id]) return false;
+  const other = S.machines[DRAFT.id];
+  openModal({
+    title: "Une autre fiche n'est pas enregistrée",
+    html: `<p class="mq">Merci de valider (ou d'annuler) les corrections de la fiche <b>${esc(disp(other))}</b> (${esc(other.modele)}) avant d'en commencer une nouvelle.</p>`,
+    ok: `Aller à ${disp(other)}`, cancel: "Fermer",
+    onOk: () => { setTimeout(() => go(`#/machine/${encodeURIComponent(other.id)}`), 0); return true; },
+  });
+  setTimeout(() => render(false), 0);   // on remet la case telle qu'elle était
+  return true;
+}
 function draftSet(id, fld, v) {
   const m = S.machines[id];
+  if (draftBlocked(id)) return;
   if (!DRAFT || DRAFT.id !== id) DRAFT = { id, v: {} };
   const base = fld === "_num" ? (noNum(m) ? "__SN__" : m.id) : (m[fld] ?? null);
   if (fld === "_num" && typeof v === "string" && v !== "__SN__") v = v.toUpperCase().replace(/\s+/g, "");
