@@ -432,6 +432,7 @@ function viewTout(q) {
 
 /* ----- fiche machine ----- */
 let DRAFT = null;   // corrections en cours (pas encore enregistrées)
+const numSN = m => DRAFT && DRAFT.id === m.id && "_num" in DRAFT.v ? DRAFT.v._num === "__SN__" : noNum(m);
 const dv = (m, f) => DRAFT && DRAFT.id === m.id && f in DRAFT.v ? DRAFT.v[f] : m[f];
 const EVT = {
   probleme: { nom: "Problème signalé", c: "probleme" },
@@ -518,6 +519,9 @@ function viewMachine(id) {
     <div class="sect"><h3>Historique : pannes, réparations, prêts</h3>${eventsHTML(id)}</div>
 
     <div class="sect ${dirty ? "dirty" : ""}"><h3>Infos de la machine</h3><p class="muted" style="margin:0 0 4px">Pour corriger une erreur de saisie. Rien n'est changé tant que tu n'as pas appuyé sur « Enregistrer ».</p>
+      <label class="f" for="f-num">Numéro interne</label>
+      <input class="inp" id="f-num" data-field="_num" autocapitalize="characters" autocomplete="off" value="${esc(DRAFT && DRAFT.id === m.id && "_num" in DRAFT.v ? (DRAFT.v._num === "__SN__" ? "" : DRAFT.v._num) : (noNum(m) ? "" : m.id))}" ${numSN(m) ? "disabled placeholder='Sans numéro'" : ""}>
+      <label class="check"><input type="checkbox" id="f-nonum" ${numSN(m) ? "checked" : ""}><span><b>Sans numéro</b><br><span class="muted">Cet appareil n'a pas de numéro.</span></span></label>
       <label class="f" for="f-famille">Type de machine</label><select class="inp" id="f-famille" data-field="famille">${famOpts}</select>
       ${inp("modele", "Modèle")}
       <label class="f" for="f-equipe">Équipe responsable</label><select class="inp" id="f-equipe" data-field="equipe">${teamOpts}</select>
@@ -531,7 +535,6 @@ function viewMachine(id) {
       ${inp("controle", "Dernier contrôle", "date")}
       <label class="f" for="f-notes">Notes</label><textarea class="inp" id="f-notes" data-field="notes">${esc(dv(m, "notes"))}</textarea>
       <datalist id="noms">${NOMS().map(n => `<option value="${esc(n)}">`).join("")}</datalist>
-      <p class="muted">Le numéro (${esc(disp(m))}) ne se modifie pas : en cas d'erreur, retire la machine et recrée-la avec le bon numéro.</p>
     </div>
 
     <details class="sect journal"><summary><h3 style="display:inline">Journal de toutes les modifications</h3></summary><ul class="hist" id="hist"><li>Chargement…</li></ul></details>
@@ -540,7 +543,7 @@ function viewMachine(id) {
   </main>
   <div class="savebar ${dirty ? "" : "hidden"}" id="savebar"><span>Modifications non enregistrées</span><button class="btn light" data-act="draft-cancel">Annuler</button><button class="btn" data-act="draft-save">💾 Enregistrer</button></div>`;
 }
-const CHAMPS = { pret_a: "Prêtée à", pret_le: "Prêtée le", depose_par: "Déposée par", depose_le: "Déposée le", recupere_par: "Récupérée par", recupere_le: "Récupérée le", photo: "Photo", statut: "État", lieu: "Lieu", reparateur: "Réparateur", depuis: "Depuis", motif: "Pourquoi", equipe: "Équipe", controle: "Contrôle", modele: "Modèle", notes: "Notes", actif: "Dans le parc", affectation: "Affectation", famille: "Type" };
+const CHAMPS = { _num: "Numéro", numero: "Numéro", pret_a: "Prêtée à", pret_le: "Prêtée le", depose_par: "Déposée par", depose_le: "Déposée le", recupere_par: "Récupérée par", recupere_le: "Récupérée le", photo: "Photo", statut: "État", lieu: "Lieu", reparateur: "Réparateur", depuis: "Depuis", motif: "Pourquoi", equipe: "Équipe", controle: "Contrôle", modele: "Modèle", notes: "Notes", actif: "Dans le parc", affectation: "Affectation", famille: "Type" };
 function histVal(c, v) {
   if (v == null || v === "") return "—";
   if (c === "statut") return ST[v] ? ST[v].nom : v;
@@ -549,6 +552,7 @@ function histVal(c, v) {
   if (["depuis", "controle", "depose_le", "recupere_le", "pret_le"].includes(c)) return frDate(v);
   if (c === "actif") return v === "true" ? "oui" : "non";
   if (c === "photo") return "nouvelle photo";
+  if (c === "_num" || c === "numero") return v === "__SN__" || String(v).startsWith("SN-") ? "Sans numéro" : v;
   return v;
 }
 async function loadHist(id) {
@@ -740,7 +744,27 @@ document.addEventListener("click", async e => {
   if (act === "draft-save" && id && DRAFT && DRAFT.id === id) {
     const m = S.machines[id], v = DRAFT.v, list = Object.keys(v).map(k => `<li>${esc(CHAMPS[k] || k)} : ${esc(histVal(k, m[k] == null ? "" : String(m[k])))} → <b>${esc(histVal(k, v[k] == null ? "" : String(v[k])))}</b></li>`).join("");
     openModal({ title: `Enregistrer ${esc(id)} ?`, html: `<p class="mq">Tu vas modifier :</p><ul class="mlist">${list}</ul>`, ok: "💾 Oui, enregistrer",
-      onOk: () => { const ch = Object.assign({}, v); if ("equipe" in ch) ch.affectation = ch.equipe != null ? chef(ch.equipe) : ""; DRAFT = null; setFields(id, ch); return true; } });
+      onOk: async () => {
+        const ch = Object.assign({}, v); let target = id;
+        if ("_num" in ch) {
+          const err = t => { $("#m-msg").innerHTML = `<div class="msg err">${esc(t)}</div>`; return false; };
+          const nn = ch._num === "__SN__" ? "SN-" + Date.now().toString(36).toUpperCase() : ch._num;
+          if (!nn) return err("Indique le nouveau numéro, ou coche « Sans numéro ».");
+          if (S.machines[nn]) return err(`Le numéro ${nn} existe déjà.`);
+          if (!navigator.onLine) return err("Il faut du réseau pour changer le numéro. Le reste peut attendre : réessaie avec du réseau.");
+          await flush();
+          if (Q.some(o => o.id === id || (o.row && o.row.id === id) || (o.ev && o.ev.id === id))) return err("Des modifs de cette machine sont encore en attente d'envoi. Réessaie dans un instant.");
+          const { data, error } = await supa.rpc("renommer_machine", { p_old: id, p_new: nn });
+          if (error || !data) return err(isNetErr(error) ? "Pas de réseau : réessaie dans un instant." : "Le serveur a refusé ce numéro (" + (error && error.message) + ").");
+          delete S.machines[id]; S.machines[data.id] = data; S.events.forEach(e => { if (e.id === id) e.id = data.id; });
+          target = data.id; saveLocal(); delete ch._num;
+        }
+        if ("equipe" in ch) ch.affectation = ch.equipe != null ? chef(ch.equipe) : "";
+        DRAFT = null;
+        if (Object.keys(ch).length) setFields(target, ch);
+        if (target !== id) setTimeout(() => replaceTo(`#/machine/${encodeURIComponent(target)}`), 0);
+        return true;
+      } });
     return;
   }
   if (act === "actif" && id) {
@@ -774,7 +798,9 @@ function nextNum(fam) {
 function draftSet(id, fld, v) {
   const m = S.machines[id];
   if (!DRAFT || DRAFT.id !== id) DRAFT = { id, v: {} };
-  if ((m[fld] ?? null) === (v ?? null)) delete DRAFT.v[fld]; else DRAFT.v[fld] = v;
+  const base = fld === "_num" ? (noNum(m) ? "__SN__" : m.id) : (m[fld] ?? null);
+  if (fld === "_num" && typeof v === "string" && v !== "__SN__") v = v.toUpperCase().replace(/\s+/g, "");
+  if (base === (v ?? null)) delete DRAFT.v[fld]; else DRAFT.v[fld] = v;
   const bar = $("#savebar"); if (bar) bar.classList.toggle("hidden", !Object.keys(DRAFT.v).length);
 }
 function fieldValue(el) {
@@ -801,6 +827,11 @@ document.addEventListener("input", e => {
 let searchT = null;
 document.addEventListener("change", e => {
   const el = e.target;
+  if (el.id === "f-nonum") {
+    const r = parseRoute(), n = $("#f-num"); n.disabled = el.checked; n.placeholder = el.checked ? "Sans numéro" : "";
+    if (el.checked) n.value = "";
+    draftSet(r.parts[1], "_num", el.checked ? "__SN__" : n.value.trim()); return;
+  }
   if (el.id === "a-nonum") { $("#a-msg").innerHTML = ""; const n = $("#a-num"); n.disabled = el.checked; if (el.checked) n.value = ""; n.placeholder = el.checked ? "Sans numéro" : ""; }
   if (el.dataset && el.dataset.field) { const r = parseRoute(); if (r.parts[0] === "machine") draftSet(r.parts[1], el.dataset.field, fieldValue(el)); }
 });
@@ -959,7 +990,9 @@ async function start() {
   // temps réel : les modifs de l'autre téléphone arrivent tout de suite
   try {
     channel = supa.channel("asdj")
-      .on("postgres_changes", { event: "*", schema: "public", table: "machines" }, p => { if (p.new && p.new.id) { mergeRow(p.new); saveLocal(); softRender(); } })
+      .on("postgres_changes", { event: "*", schema: "public", table: "machines" }, p => {
+        if (p.eventType === "DELETE" && p.old && p.old.id) { delete S.machines[p.old.id]; saveLocal(); softRender(); return; }
+        if (p.new && p.new.id) { mergeRow(p.new); saveLocal(); softRender(); } })
       .on("postgres_changes", { event: "*", schema: "public", table: "equipes" }, p => { if (p.new && p.new.numero != null) { mergeEquipe(p.new); saveLocal(); softRender(); } })
       .subscribe();
   } catch (e) { console.warn("temps réel indisponible", e); }
