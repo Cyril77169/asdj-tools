@@ -1,7 +1,7 @@
 /* ASDJ - Tools : suivi du matériel par famille et par équipe.
    Données partagées entre les comptes connectés (Supabase), copie locale + file d'attente pour le hors ligne. */
 "use strict";
-const APP_V = 6;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
+const APP_V = 7;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
 const CFG = window.APP_CONFIG;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -58,19 +58,22 @@ const SVG = {
 
 /* ---------- état + stockage local ---------- */
 const LS_CACHE = "asdj_cache_v1", LS_Q = "asdj_queue_v1", LS_REJ = "asdj_rejets_v1";
-const S = { machines: {}, equipes: {}, events: [], cacheAt: 0 };
+const S = { machines: {}, equipes: {}, events: [], annul: {}, membres: {}, cacheAt: 0 };
 let Q = [];        // modifications pas encore envoyées
 let REJ = [];      // modifications refusées par le serveur (gardées, jamais effacées)
 let supa = null, USER = null;
+let ROLE = (() => { try { return localStorage.getItem("asdj_role") || ""; } catch (e) { return ""; } })();   // chef | equipier | coupe
+let PAUSE = "";      // frein : heure de fin de pause (équipier)
+const isChef = () => ROLE === "chef";
 try {
   const c = JSON.parse(localStorage.getItem(LS_CACHE) || "null");
-  if (c) { S.machines = c.m || {}; S.equipes = c.e || {}; S.events = c.ev || []; S.cacheAt = c.at || 0; }
+  if (c) { S.machines = c.m || {}; S.equipes = c.e || {}; S.events = c.ev || []; S.annul = c.an || {}; S.membres = c.mb || {}; S.cacheAt = c.at || 0; }
   Q = JSON.parse(localStorage.getItem(LS_Q) || "[]");
   REJ = JSON.parse(localStorage.getItem(LS_REJ) || "[]");
 } catch (e) { console.warn("cache illisible", e); }
 function saveLocal() {
   try {
-    localStorage.setItem(LS_CACHE, JSON.stringify({ m: S.machines, e: S.equipes, ev: S.events, at: S.cacheAt }));
+    localStorage.setItem(LS_CACHE, JSON.stringify({ m: S.machines, e: S.equipes, ev: S.events, an: S.annul, mb: S.membres, at: S.cacheAt }));
     localStorage.setItem(LS_Q, JSON.stringify(Q));
     localStorage.setItem(LS_REJ, JSON.stringify(REJ));
   } catch (e) { console.warn("sauvegarde locale impossible", e); }
@@ -101,6 +104,17 @@ function repPicker(id, cur, field) {
     <input class="inp ${other ? "" : "hidden"}" id="${id}" ${field ? `data-field="${field}"` : ""} value="${esc(cur || "")}" placeholder="Nom du réparateur" autocomplete="off">`;
 }
 const noNum = m => String(m.id || m).startsWith("SN-");
+const hhmm = d => d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+const dateHeure = iso => { const d = new Date(iso); return `${d.toLocaleDateString("fr-FR")} à ${hhmm(d)}`; };
+const nomDe = uid => (uid && S.membres[uid] && S.membres[uid].nom) || "";
+function whoHTML(uid, fallback) {
+  const n = nomDe(uid) || fallback || ""; if (!n) return "";
+  const r = uid && S.membres[uid] ? S.membres[uid].role : "";
+  return `<span class="who ${n === "Cyril" ? "c" : n === "Nico" ? "n" : r === "chef" ? "c" : ""}">${esc(n)}</span>`;
+}
+const evAnnul = e => e && e._hid && S.annul[e._hid];
+const ANN = {};      // ligne annulée → { par, at } (vu dans les listes chargées)
+const HROWS = {};    // lignes d'historique affichées (pour le menu ⋯)
 const disp = m => noNum(m) ? "Sans n°" : (m.id || m);
 const statMatch = (m, sel) => !sel || (sel === "attribuee" ? ATTRIB.includes(m.statut) : m.statut === sel);
 function whereTxt(m) {
@@ -217,13 +231,20 @@ async function flush() {
         const oldId = op.k === "ev" ? op.ev.id : op.id, nid = await findNewId(oldId);
         if (nid) { retarget(oldId, nid); saveLocal(); continue; }   // la machine a changé de numéro : on renvoie la modif au bon endroit
       }
+      if (res && res.error && !isNetErr(res.error)) {
+        const msg = String(res.error.message || "");
+        const pm = msg.match(/pause:(\d\d:\d\d)/);
+        if (pm) { setPause(pm[1]); break; }                         // frein : on garde tout, on réessaiera plus tard
+        if (/acces coupe/.test(msg)) { whoami().then(() => { if (ROLE === "coupe") viewCoupe(); }); break; }
+        if (/reserve aux chefs/.test(msg)) { op.msg = msg; REJ.push(Q.shift()); saveLocal(); continue; }   // mis de côté, pas effacé
+      }
       if (res && res.error) {
         if (isNetErr(res.error)) throw res.error;
         op.err = (op.err || 0) + 1; op.msg = res.error.message;
         if (op.err >= 4) { REJ.push(Q.shift()); saveLocal(); continue; } // mis de côté, pas effacé
         throw res.error;
       }
-      Q.shift(); flushGen++;
+      Q.shift(); flushGen++; if (PAUSE) PAUSE = "";
       if (op.k === "f" && res.data && res.data.id) mergeRow(res.data);
       saveLocal();
     }
@@ -250,11 +271,19 @@ async function refresh() {
   if (refreshing || !supa || !USER) return false;
   refreshing = true; const gen0 = flushGen;
   try {
-    const [ms, es, hs] = await Promise.all([fetchAll("machines", "id"), fetchAll("equipes", "numero"),
-      fetchAll("historique", "id", q => q.eq("champ", "evenement"))]);
+    const role0 = ROLE; await whoami();
+    if (ROLE === "coupe") { viewCoupe(); return false; }
+    if (role0 && role0 !== ROLE) setTimeout(softRender, 0);
+    const [ms, es, hs, mb] = await Promise.all([fetchAll("machines", "id"), fetchAll("equipes", "numero"),
+      fetchAll("historique", "id", q => q.in("champ", ["evenement", "annulation"])), fetchAll("membres", "user_id").catch(() => null)]);
     S.machines = {}; ms.forEach(r => S.machines[r.id] = r);
     S.equipes = {}; es.forEach(r => S.equipes[r.numero] = r);
-    S.events = []; hs.forEach(h => { try { S.events.push(JSON.parse(h.nouveau)); } catch (e) {} });
+    S.events = []; S.annul = {};
+    hs.forEach(h => {
+      if (h.champ === "annulation") { if (h.annule) S.annul[h.annule] = { par: h.par, at: h.at }; return; }
+      try { const e = JSON.parse(h.nouveau); e._hid = h.id; S.events.push(e); } catch (e) {}
+    });
+    if (mb) { S.membres = {}; mb.forEach(r => S.membres[r.user_id] = { nom: r.nom, role: r.role, actif: r.actif }); }
     Q.forEach(applyOp);
     S.cacheAt = Date.now(); saveLocal();
     if (flushGen !== gen0) setTimeout(() => refresh().then(ok => ok && softRender()), 300);
@@ -263,15 +292,41 @@ async function refresh() {
   finally { refreshing = false; updateStatus(); }
 }
 
+/* ---------- rôle de la personne connectée (Chef / Équipier / accès coupé) ---------- */
+async function whoami() {
+  if (!supa || !USER || !navigator.onLine) return;
+  try {
+    const { data, error } = await supa.rpc("je_suis_la");
+    if (error || !data) return;
+    ROLE = data.role || "equipier"; try { localStorage.setItem("asdj_role", ROLE); } catch (e) {}
+    if (!data.pause && PAUSE) { PAUSE = ""; updateStatus(); if (Q.length) flushSoon(); }
+  } catch (e) {}
+}
+function setPause(t) {
+  const fresh = PAUSE !== t; PAUSE = t; updateStatus();
+  if (fresh && !MODAL) openModal({ title: "Pause 🛑", center: true, cancel: null, ok: "Compris",
+    html: `<p class="mq">Tu as fait <b>20 modifs en moins d'une heure</b>.</p><p class="mq">Pour éviter les erreurs en série, les modifs sont en pause jusqu'à <b>${esc(t)}</b>. Rien n'est perdu : elles partiront toutes seules après.</p><p class="muted">Si c'est normal (gros inventaire…), demande à Cyril ou Nico de lever la pause.</p>` });
+}
+function viewCoupe() {
+  started = true; hideLoader(); closeModal(true);
+  const st = $("#status"); if (st) st.classList.add("hidden");
+  $("#app").innerHTML = `<div class="login"><div class="brand"><img src="icons/icon-192.png" alt=""><h1>ASDJ - Tools</h1><p class="sub">Au service des jardins</p></div>
+    <div class="sect"><p class="mq">⛔ Ton accès à l'appli a été coupé.</p><p class="muted">Demande à Cyril ou Nico de te le rendre, puis touche « Réessayer ».</p>
+    <div style="height:12px"></div><button class="btn light" id="cp-retry">Réessayer</button></div></div>`;
+  $("#cp-retry").onclick = async () => { await whoami(); if (ROLE !== "coupe") location.reload(); };
+}
+
 /* ---------- barre d'état ---------- */
 function updateStatus(force) {
   const el = $("#status"); if (!el || !USER) return;
+  if (ROLE === "coupe") { el.className = "hidden"; return; }
   let txt, cls = "";
   const n = Q.length, pp = PHOTOS_WAIT.length;
   if (force === "busy" || flushing || sendingPhotos) { cls = "busy"; txt = "Envoi en cours…"; }
   else if (!navigator.onLine) { cls = "off"; txt = n ? `Hors ligne · ${n} modif${n > 1 ? "s" : ""} en attente d'envoi` : "Hors ligne · tout est gardé sur le téléphone"; }
   else if (n) { cls = "off"; txt = `${n} modif${n > 1 ? "s" : ""} en attente d'envoi`; }
   else txt = pp ? "Données sauvegardées en ligne" : "Tout est sauvegardé en ligne";
+  if (PAUSE && n) { cls = "off"; txt = `⏸️ Modifs en pause jusqu'à ${PAUSE} · ${n} en attente`; }
   if (pp) { if (!cls) cls = "off"; txt += ` · ${pp} photo${pp > 1 ? "s" : ""} en attente d'envoi`; }
   if (REJ.length) { cls = "err"; txt += ` · ${REJ.length} refusée${REJ.length > 1 ? "s" : ""} (préviens Claude)`; }
   el.className = cls; $("#status-txt").textContent = txt;
@@ -339,12 +394,12 @@ function parseRoute() {
 
 /* ---------- fenêtre de confirmation ---------- */
 let MODAL = null;
-function openModal({ title, html, ok = "Oui, confirmer", okColor, cancel = "Non, annuler", onOk, onOpen }) {
-  closeModal(true);
-  const d = document.createElement("div"); d.id = "modal";
+function openModal({ title, html, ok = "Oui, confirmer", okColor, cancel = "Non, annuler", onOk, onOpen, center }) {
+  closeModal(true); closePops();
+  const d = document.createElement("div"); d.id = "modal"; if (center) d.className = "center";
   d.innerHTML = `<div class="mback" data-act="m-cancel"></div><div class="mbox" role="dialog" aria-modal="true">
     <h2>${title}</h2><div class="mbody">${html || ""}</div><div id="m-msg"></div>
-    <div class="mbtns"><button class="btn light" data-act="m-cancel">${esc(cancel)}</button><button class="btn" data-act="m-ok" ${okColor ? `style="background:${okColor}"` : ""}>${esc(ok)}</button></div></div>`;
+    <div class="mbtns ${cancel === null ? "one" : ""}">${cancel === null ? "" : `<button class="btn light" data-act="m-cancel">${esc(cancel)}</button>`}<button class="btn" data-act="m-ok" ${okColor ? `style="background:${okColor}"` : ""}>${esc(ok)}</button></div></div>`;
   document.body.appendChild(d); document.body.classList.add("noscroll");
   MODAL = { onOk, el: d };
   if (onOpen) onOpen(d);
@@ -353,6 +408,8 @@ function closeModal(silent) {
   if (!MODAL) return; MODAL.el.remove(); MODAL = null; document.body.classList.remove("noscroll");
   if (!silent && pendingRender) softRender();
 }
+function infoModal(title, html) { openModal({ title, html, ok: "Compris", cancel: null, center: true }); }
+function closePops() { document.querySelectorAll(".pop").forEach(p => p.remove()); document.querySelectorAll(".dots.on").forEach(b => b.classList.remove("on")); }
 const mval = id => { const e = document.getElementById(id); return e ? e.value.trim() : ""; };
 const mfile = id => { const e = document.getElementById(id); return e && e.files && e.files[0]; };
 
@@ -392,6 +449,7 @@ function viewHome() {
     <a class="sechead" href="#/equipes"><span class="tb-ic">${SVG.team}</span><b>Les équipes</b><span class="sp"></span><small>Tout voir</small>${SVG.chev}</a>
     <div class="tgrid">${teams.map(n => teamCard(n, all)).join("")}</div>
     <a class="allband" href="#/tout"><span class="tb-ic">${SVG.list}</span><span class="tb-txt"><b>Toutes les machines</b><small>${all.length} machines</small></span><span class="tb-chev">${SVG.chev}</span></a>
+    ${isChef() ? `<a class="thin" href="#/activite">📋 <u>Activité et annulations</u> ›</a>` : ""}
     </main>`;
 }
 
@@ -431,7 +489,7 @@ function teamCard(n, all) {
     <span class="tnum">${n}</span><b>${esc(chef(n) || "Chef à indiquer")}</b><small>${l.length} machine${l.length > 1 ? "s" : ""}</small>
     ${bad.length ? `<span class="tbad">${bad.length} en souci <span class="tminis">${minis}</span></span>` : `<span class="tok">✓ tout va bien</span>`}</a>`;
 }
-function teamPannes(n) { return S.events.filter(e => (e.type === "probleme" || e.type === "hs") && e.equipe === n).length; }
+function teamPannes(n) { return S.events.filter(e => !evAnnul(e) && (e.type === "probleme" || e.type === "hs") && e.equipe === n).length; }
 function viewEquipes() {
   const all = actives();
   const cards = `<div class="tgrid">${teamNums().map(n => { const p = teamPannes(n); return teamCard(n, all).replace("</a>", `${p ? `<span class="tpan">${p} panne${p > 1 ? "s" : ""} signalée${p > 1 ? "s" : ""} au total</span>` : ""}</a>`); }).join("")}</div>`;
@@ -439,7 +497,7 @@ function viewEquipes() {
   return header("Les équipes", "Le matériel de chaque chef") + `<main>${cards}<div class="list" style="margin-top:12px">
     <a class="card" href="#/equipe/depot" style="--c:var(--s-disponible)"><span class="stripe"></span><span class="body team"><span class="badge depot">D</span>
       <span style="flex:1;min-width:0"><span class="num" style="font-size:18px">Dépôt</span><div class="where">${dep.length} machine${dep.length > 1 ? "s" : ""} au dépôt ou en réparation</div>${barHTML(dep)}</span></span></a>
-  </div><div class="addbar"><button class="btn light" data-act="team-add">+ Ajouter une équipe</button></div></main>`;
+  </div><div class="addbar">${isChef() ? `<button class="btn light" data-act="team-add">+ Ajouter une équipe</button>` : `<div class="lock">🔒 Ajouter une équipe : réservé à Cyril et Nico</div>`}</div></main>`;
 }
 function viewEquipe(id, q) {
   const isDep = id === "depot", n = isDep ? null : +id;
@@ -450,7 +508,7 @@ function viewEquipe(id, q) {
     .sort((x, y) => (x.l.length ? prio(x.l[0]) : 99) - (y.l.length ? prio(y.l[0]) : 99));
   const body = fams.map(({ f, l }) => l.length ? `<div class="group-h"><span style="color:${fc(f.id)}">${ICONS[f.id]}</span>${esc(f.nom)} · ${l.length}</div><div class="list">${l.map(cardHTML).join("")}</div>` : "").join("")
     || `<div class="empty">Aucune machine ici.</div>`;
-  const edit = isDep ? "" : `<button class="iconbtn" data-act="chef" data-n="${n}" aria-label="Changer le chef">✎</button>`;
+  const edit = isDep || !isChef() ? "" : `<button class="iconbtn" data-act="chef" data-n="${n}" aria-label="Changer le chef">✎</button>`;
   return header(isDep ? "Dépôt" : `Équipe ${n}`, isDep ? "Au dépôt ou en réparation" : (chef(n) ? `Chef : ${chef(n)}` : "Chef à indiquer"), { right: edit }) +
     `<main>${summaryHTML(all, `#/equipe/${id}?`)}${sel ? `<div class="filtre">Filtre : <b>${esc(sel === "attribuee" ? "Attribuées" : ST[sel].nom)}</b> <a href="#/equipe/${id}">✕ retirer</a></div>` : ""}${body}
     <div class="sect" style="margin-top:18px"><h3>Historique de l'équipe : pannes, réparations, prêts</h3>${teamHistHTML(n)}</div></main>`;
@@ -493,31 +551,34 @@ function evLines(e) {
   return lines;
 }
 function teamHistHTML(n) {
-  const ev = S.events.filter(e => n === null ? e.equipe == null : e.equipe === n).sort((a, b) => String(b.at).localeCompare(String(a.at)));
-  if (!ev.length) return `<p class="muted">Rien d'enregistré pour l'instant.</p>`;
+  const evAll = S.events.filter(e => n === null ? e.equipe == null : e.equipe === n).sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  if (!evAll.length) return `<p class="muted">Rien d'enregistré pour l'instant.</p>`;
+  const ev = evAll.filter(e => !evAnnul(e));
   const np = ev.filter(e => e.type === "probleme" || e.type === "hs").length, nr = ev.filter(e => e.type === "reparation").length, npr = ev.filter(e => e.type === "pret").length;
   const per = {}; ev.filter(e => e.type === "probleme" || e.type === "hs").forEach(e => per[e.id] = (per[e.id] || 0) + 1);
   const top = Object.entries(per).sort((a, b) => b[1] - a[1]).filter(x => x[1] > 1);
   return `<div class="evsum"><span><b>${np}</b> panne${np > 1 ? "s" : ""}</span><span><b>${nr}</b> réparation${nr > 1 ? "s" : ""}</span><span><b>${npr}</b> prêt${npr > 1 ? "s" : ""}</span></div>
     ${top.length ? `<p class="muted">Machines qui tombent le plus en panne : ${top.map(([k, v]) => `<b>${esc(k)}</b> (${v})`).join(", ")}</p>` : ""}
-    <ul class="evlist">${ev.slice(0, 60).map(e => {
-      const t = EVT[e.type] || { nom: e.type, c: "hs" }, d = new Date(e.at), mm = S.machines[e.id];
-      return `<li style="--c:${sc(t.c)}"><a class="evtxt" href="#/machine/${encodeURIComponent(e.id)}"><time>${d.toLocaleDateString("fr-FR")} à ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</time>
-        <span class="evm">${mm ? `<span class="evic" style="color:${fc(mm.famille)}">${ICONS[mm.famille]}</span>` : ""}<b>${esc(mm ? disp(mm) : e.id)}${mm && noNum(mm) ? ` (${esc(mm.modele)})` : ""}</b> · ${esc(t.nom)}</span>${evLines(e).map(l => `<div>${esc(l)}</div>`).join("")}</a>
+    <ul class="evlist">${evAll.slice(0, 60).map(e => {
+      const t = EVT[e.type] || { nom: e.type, c: "hs" }, d = new Date(e.at), mm = S.machines[e.id], an = evAnnul(e);
+      return `<li style="--c:${sc(t.c)}" class="${an ? "undone" : ""}"><a class="evtxt" href="#/machine/${encodeURIComponent(e.id)}"><time>${d.toLocaleDateString("fr-FR")} à ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</time>
+        <span class="evm">${mm ? `<span class="evic" style="color:${fc(mm.famille)}">${ICONS[mm.famille]}</span>` : ""}<b>${esc(mm ? disp(mm) : e.id)}${mm && noNum(mm) ? ` (${esc(mm.modele)})` : ""}</b> · ${esc(t.nom)}</span>${evLines(e).map(l => `<div>${esc(l)}</div>`).join("")}${an ? `<span class="tag">Annulé par ${esc(nomDe(an.par) || "un chef")}</span>` : ""}</a>
         ${e.photo ? `<button class="thumb" data-act="zoom" data-key="${esc(e.photo)}"><img data-photo="${esc(e.photo)}" alt="Photo"></button>` : ""}</li>`;
     }).join("")}</ul>`;
 }
 function eventsOf(id) { return S.events.filter(e => e.id === id).sort((a, b) => String(b.at).localeCompare(String(a.at))); }
 function eventsHTML(id) {
-  const ev = eventsOf(id);
-  if (!ev.length) return `<p class="muted">Aucune panne, réparation ni prêt enregistré pour l'instant.</p>`;
+  const evAll = eventsOf(id), ev = evAll.filter(e => !evAnnul(e));
+  if (!evAll.length) return `<p class="muted">Aucune panne, réparation ni prêt enregistré pour l'instant.</p>`;
   const np = ev.filter(e => e.type === "probleme" || e.type === "hs").length, nr = ev.filter(e => e.type === "reparation").length;
   const teams = {}; ev.filter(e => e.type === "probleme" || e.type === "hs").forEach(e => { const k = teamLabel(e.equipe); teams[k] = (teams[k] || 0) + 1; });
   const npr = ev.filter(e => e.type === "pret").length;
   return `<div class="evsum"><span><b>${np}</b> panne${np > 1 ? "s" : ""}</span><span><b>${nr}</b> réparation${nr > 1 ? "s" : ""}</span><span><b>${npr}</b> prêt${npr > 1 ? "s" : ""}</span></div>
     ${Object.keys(teams).length ? `<p class="muted">Pannes par équipe : ${Object.entries(teams).map(([k, v]) => `${esc(k)} (${v})`).join(", ")}</p>` : ""}
-    <ul class="evlist">${ev.map(e => {
-      const t = EVT[e.type] || { nom: e.type, c: "hs" }, d = new Date(e.at);
+    <ul class="evlist">${evAll.map(e => {
+      const t = EVT[e.type] || { nom: e.type, c: "hs" }, d = new Date(e.at), an = evAnnul(e);
+      if (e._hid) HROWS[e._hid] = { id: e._hid, machine_id: id, champ: "evenement", nouveau: JSON.stringify(e), at: e.at, _auteur: e.auteur };
+      const can = isChef() && e._hid && !an;
       const lines = [];
       if (e.equipe != null && e.type !== "retour") lines.push(`Équipe : ${teamLabel(e.equipe)}`);
       if (e.motif) lines.push(`Pourquoi : ${e.motif}`);
@@ -528,8 +589,8 @@ function eventsHTML(id) {
       if (e.recupere_par || e.recupere_le) lines.push(`Récupérée${e.recupere_par ? ` par ${e.recupere_par}` : ""}${e.recupere_le ? ` le ${frDate(e.recupere_le)}` : ""}`);
       if (e.duree != null && e.type === "retour") lines.push(`Durée chez le réparateur : ${e.duree} j`);
       if (e.auteur) lines.push(`Noté par ${e.auteur}`);
-      return `<li style="--c:${sc(t.c)}"><div class="evtxt"><time>${d.toLocaleDateString("fr-FR")} à ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</time>
-        <b>${esc(t.nom)}</b>${lines.map(l => `<div>${esc(l)}</div>`).join("")}</div>${e.photo ? `<button class="thumb" data-act="zoom" data-key="${esc(e.photo)}"><img data-photo="${esc(e.photo)}" alt="Photo"></button>` : ""}</li>`;
+      return `<li style="--c:${sc(t.c)}" class="${an ? "undone" : ""}"><div class="evtxt"><time>${d.toLocaleDateString("fr-FR")} à ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</time>
+        <b>${esc(t.nom)}</b>${lines.map(l => `<div>${esc(l)}</div>`).join("")}${an ? `<span class="tag">Annulé par ${esc(nomDe(an.par) || "un chef")} le ${dateHeure(an.at)}</span>` : ""}</div>${e.photo ? `<button class="thumb" data-act="zoom" data-key="${esc(e.photo)}"><img data-photo="${esc(e.photo)}" alt="Photo"></button>` : ""}${can ? `<button class="dots" data-act="dots" data-kind="row" data-hid="${e._hid}" aria-label="Options">⋯</button>` : ""}</li>`;
     }).join("")}</ul>`;
 }
 function viewMachine(id) {
@@ -561,10 +622,11 @@ function viewMachine(id) {
     <div class="sect"><h3>Historique : pannes, réparations, prêts</h3>${eventsHTML(id)}</div>
 
     <div class="sect ${dirty ? "dirty" : ""}"><h3>Infos de la machine</h3><p class="muted" style="margin:0 0 4px">Pour corriger une erreur de saisie. Rien n'est changé tant que tu n'as pas appuyé sur « Enregistrer ».</p>
+      ${isChef() ? "" : `<div class="lock">🔒 Numéro et type : réservé à Cyril et Nico</div>`}
       <label class="f" for="f-num">Numéro interne</label>
-      <input class="inp" id="f-num" data-field="_num" autocapitalize="characters" autocomplete="off" value="${esc(DRAFT && DRAFT.id === m.id && "_num" in DRAFT.v ? (DRAFT.v._num === "__SN__" ? "" : DRAFT.v._num) : (noNum(m) ? "" : m.id))}" ${numSN(m) ? "disabled placeholder='Sans numéro'" : ""}>
-      <label class="check"><input type="checkbox" id="f-nonum" ${numSN(m) ? "checked" : ""}><span><b>Sans numéro</b><br><span class="muted">Cet appareil n'a pas de numéro.</span></span></label>
-      <label class="f" for="f-famille">Type de machine</label><select class="inp" id="f-famille" data-field="famille">${famOpts}</select>
+      <input class="inp" id="f-num" data-field="_num" autocapitalize="characters" autocomplete="off" value="${esc(DRAFT && DRAFT.id === m.id && "_num" in DRAFT.v ? (DRAFT.v._num === "__SN__" ? "" : DRAFT.v._num) : (noNum(m) ? "" : m.id))}" ${numSN(m) ? "disabled placeholder='Sans numéro'" : isChef() ? "" : "disabled"}>
+      <label class="check"><input type="checkbox" id="f-nonum" ${numSN(m) ? "checked" : ""} ${isChef() ? "" : "disabled"}><span><b>Sans numéro</b><br><span class="muted">Cet appareil n'a pas de numéro.</span></span></label>
+      <label class="f" for="f-famille">Type de machine</label><select class="inp" id="f-famille" data-field="famille" ${isChef() ? "" : "disabled"}>${famOpts}</select>
       ${inp("modele", "Modèle")}
       <label class="f" for="f-equipe">Équipe responsable</label><select class="inp" id="f-equipe" data-field="equipe">${teamOpts}</select>
       <label class="f">Où est-elle ?</label><div class="where3">${Object.entries(LIEUX).map(([k, v]) => `<button class="${lieu === k ? "on" : ""}" data-act="lieu" data-v="${k}">${esc(v)}</button>`).join("")}</div>
@@ -579,13 +641,14 @@ function viewMachine(id) {
       <datalist id="noms">${NOMS().map(n => `<option value="${esc(n)}">`).join("")}</datalist>
     </div>
 
-    <details class="sect journal"><summary><h3 style="display:inline">Journal de toutes les modifications</h3></summary><ul class="hist" id="hist"><li>Chargement…</li></ul></details>
+    <details class="sect journal" ${JOPEN ? "open" : ""}><summary><h3 style="display:inline">Journal de toutes les modifications</h3></summary><ul class="hist" id="hist" data-id="${esc(id)}">${HISTC[id] || "<li>Chargement…</li>"}</ul></details>
 
-    <button class="btn ${m.actif === false ? "light" : "danger"}" data-act="actif">${m.actif === false ? "Remettre dans le parc" : "Retirer du parc (vendue, perdue, détruite…)"}</button>
+    ${isChef() ? `<button class="btn ${m.actif === false ? "light" : "danger"}" data-act="actif">${m.actif === false ? "Remettre dans le parc" : "Retirer du parc (vendue, perdue, détruite…)"}</button>`
+      : `<button class="btn dis" disabled>🔒 ${m.actif === false ? "Remettre dans le parc" : "Retirer du parc"} : réservé à Cyril et Nico</button>`}
   </main>
   <div class="savebar ${dirty ? "" : "hidden"}" id="savebar"><span>Modifications non enregistrées</span><button class="btn light" data-act="draft-cancel">Annuler</button><button class="btn" data-act="draft-save">💾 Enregistrer</button></div>`;
 }
-const CHAMPS = { _num: "Numéro", numero: "Numéro", pret_a: "Prêtée à", pret_le: "Prêtée le", depose_par: "Déposée par", depose_le: "Déposée le", recupere_par: "Récupérée par", recupere_le: "Récupérée le", photo: "Photo", statut: "État", lieu: "Lieu", reparateur: "Réparateur", depuis: "Depuis", motif: "Pourquoi", equipe: "Équipe", controle: "Contrôle", modele: "Modèle", notes: "Notes", actif: "Dans le parc", affectation: "Affectation", famille: "Type" };
+const CHAMPS = { creation: "Ajout", _num: "Numéro", numero: "Numéro", pret_a: "Prêtée à", pret_le: "Prêtée le", depose_par: "Déposée par", depose_le: "Déposée le", recupere_par: "Récupérée par", recupere_le: "Récupérée le", photo: "Photo", statut: "État", lieu: "Lieu", reparateur: "Réparateur", depuis: "Depuis", motif: "Pourquoi", equipe: "Équipe", controle: "Contrôle", modele: "Modèle", notes: "Notes", actif: "Dans le parc", affectation: "Affectation", famille: "Type" };
 function histVal(c, v) {
   if (v == null || v === "") return "—";
   if (c === "statut") return ST[v] ? ST[v].nom : v;
@@ -597,16 +660,197 @@ function histVal(c, v) {
   if (c === "_num" || c === "numero") return v === "__SN__" || String(v).startsWith("SN-") ? "Sans numéro" : v;
   return v;
 }
+/* une ligne d'historique (journal de la fiche ou écran Activité) */
+function histTxt(h) {
+  const c = h.champ;
+  if (c === "creation") return "➕ a ajouté cette machine";
+  if (c === "evenement") { let e = {}; try { e = JSON.parse(h.nouveau); } catch (x) {} const t = EVT[e.type]; return `🔧 a noté : ${esc(t ? t.nom : (e.type || "un événement"))}${e.motif ? ` « ${esc(e.motif)} »` : ""}`; }
+  if (c === "annulation") return h.nouveau === "creation" ? "↩️ a annulé l'ajout de cette machine" : "↩️ a annulé une panne / un événement noté";
+  if (h.annule) return `↩️ a annulé une modif : ${esc(CHAMPS[c] || c)} remis à <b>${esc(histVal(c, h.nouveau))}</b>`;
+  return `${esc(CHAMPS[c] || c)} : ${esc(histVal(c, h.ancien))} → <b>${esc(histVal(c, h.nouveau))}</b>`;
+}
+const canUndo = h => isChef() && !ANN[h.id] && !S.annul[h.id] && !h.annule && !["numero", "annulation"].includes(h.champ) && !!S.machines[h.machine_id];
+/* les lignes d'une même action (même personne, même machine, à moins de 2 min) sont regroupées */
+function groupRows(rows) {
+  const out = [];
+  for (const h of rows) {
+    const g = out[out.length - 1], f = g && g[g.length - 1], rev = x => !!(x.annule || x.champ === "annulation");
+    if (f && f.machine_id === h.machine_id && f.par === h.par && rev(f) === rev(h) && Math.abs(Date.parse(f.at) - Date.parse(h.at)) <= 120000) g.push(h);
+    else out.push([h]);
+  }
+  return out;
+}
+function histLi(g, withM) {
+  g.forEach(h => HROWS[h.id] = h);
+  const h0 = g[0], m = S.machines[h0.machine_id];
+  const ans = g.map(h => ANN[h.id] || S.annul[h.id]), an = ans.find(Boolean), all = ans.every(Boolean);
+  const hids = g.filter(canUndo).map(h => h.id);
+  const ml = withM ? ` · <b>${esc(m ? disp(m) : h0.machine_id)}</b> ${esc(m ? `${FAM[m.famille] ? FAM[m.famille].un : ""} ${m.modele || ""}` : "")}` : "";
+  const lines = g.map((h, i) => `<div class="${ans[i] ? "undone" : ""}">${histTxt(h)}</div>`).join("");
+  return `<li class="hrow"><div class="tx"><div class="${all ? "undone" : ""}"><time>${dateHeure(h0.at)}${ml}</time>${whoHTML(h0.par)}</div>${lines}${an ? `<span class="tag">Annulé par ${esc(nomDe(an.par) || "un chef")} le ${dateHeure(an.at)}</span>` : ""}</div>${hids.length ? `<button class="dots" data-act="dots" data-kind="row" data-hid="${hids.join(",")}" aria-label="Options">⋯</button>` : ""}</li>`;
+}
+const deNom = n => /^[aeiouyéèêh]/i.test(n || "") ? `d'${n}` : `de ${n}`;
+let JOPEN = false; const HISTC = {};
+document.addEventListener("toggle", e => { if (e.target.matches && e.target.matches("details.journal")) JOPEN = e.target.open; }, true);
 async function loadHist(id) {
   const ul = $("#hist"); if (!ul) return;
-  if (!supa || !navigator.onLine) { ul.innerHTML = `<li>Visible quand il y a du réseau.</li>`; return; }
-  const { data, error } = await supa.from("historique").select("*").eq("machine_id", id).neq("champ", "evenement").order("at", { ascending: false }).limit(60);
-  if (!$("#hist")) return;
-  if (error) { ul.innerHTML = `<li>Journal indisponible pour le moment.</li>`; return; }
-  ul.innerHTML = (data || []).length ? data.map(h => {
-    const d = new Date(h.at);
-    return `<li><time>${d.toLocaleDateString("fr-FR")} à ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</time>${esc(CHAMPS[h.champ] || h.champ)} : ${esc(histVal(h.champ, h.ancien))} → <b>${esc(histVal(h.champ, h.nouveau))}</b></li>`;
-  }).join("") : `<li>Aucun changement pour l'instant.</li>`;
+  if (!supa || !navigator.onLine) { if (!HISTC[id]) ul.innerHTML = `<li>Visible quand il y a du réseau.</li>`; return; }
+  const { data, error } = await supa.from("historique").select("*").eq("machine_id", id).neq("champ", "evenement").order("at", { ascending: false }).order("id", { ascending: false }).limit(80);
+  if (error) { const u = $("#hist"); if (u && !HISTC[id]) u.innerHTML = `<li>Journal indisponible pour le moment.</li>`; return; }
+  (data || []).forEach(h => { if (h.annule) ANN[h.annule] = { par: h.par, at: h.at }; });
+  HISTC[id] = (data || []).length ? groupRows(data).map(g => histLi(g, false)).join("") : `<li>Aucun changement pour l'instant.</li>`;
+  const u2 = $("#hist"); if (u2 && u2.dataset.id === id) u2.innerHTML = HISTC[id];
+}
+
+/* ---------- annuler des modifs (chefs) ---------- */
+const mname = id => { const m = S.machines[id]; return m ? disp(m) : id; };
+function undoTxt(h) {
+  if (h.champ === "creation") return "la machine ajoutée sera rangée dans « Retirées »";
+  if (h.champ === "evenement") { let e = {}; try { e = JSON.parse(h.nouveau); } catch (x) {} return `« ${esc(EVT[e.type] ? EVT[e.type].nom : "Événement")} » sera barré`; }
+  return `${esc(CHAMPS[h.champ] || h.champ)} : ${esc(histVal(h.champ, h.nouveau))} → <b>${esc(histVal(h.champ, h.ancien))}</b> (comme avant)`;
+}
+function listeTxt(x) {
+  if (x.c === "creation") return `<b>${esc(mname(x.m))}</b> → rangée dans « Retirées »`;
+  if (x.c === "evenement") return `<b>${esc(mname(x.m))}</b> « ${esc(EVT[x.type] ? EVT[x.type].nom : "Événement")} » → barré`;
+  return `<b>${esc(mname(x.m))}</b> ${esc(CHAMPS[x.c] || x.c)} : ${esc(histVal(x.c, x.de))} → <b>${esc(histVal(x.c, x.vers))}</b>`;
+}
+const gardeTxt = g => g.map(x => `<b>${esc(mname(x.m))}</b> (${esc(CHAMPS[x.c] || x.c)}${x.par ? ` : ${esc(x.par)} est passé derrière` : ""})`).join(", ");
+async function undoBlocked() {
+  if (Q.length && navigator.onLine) await flush();
+  if (!navigator.onLine) return "Il faut du réseau pour annuler une modif.";
+  if (DRAFT && Object.keys(DRAFT.v).length && S.machines[DRAFT.id]) return `Termine d'abord les corrections de la fiche ${disp(S.machines[DRAFT.id])} (Enregistrer ou Annuler) pour pouvoir annuler une modif.`;
+  if (Q.length) return "Des modifs attendent encore d'être envoyées. Attends qu'elles soient parties (barre du bas) pour pouvoir annuler.";
+  return "";
+}
+function afterUndo(d) {
+  setTimeout(async () => {
+    if (d.garde && d.garde.length) infoModal(d.fait ? "C'est fait, sauf…" : "Rien n'a été annulé",
+      `<p class="mq">${d.garde.length > 1 ? `${d.garde.length} modifs gardées` : "Modif gardée"} car changée${d.garde.length > 1 ? "s" : ""} ensuite : ${gardeTxt(d.garde)}.</p><p class="muted">On ne touche pas à ce qui a été fait après.</p>`);
+    Object.keys(HISTC).forEach(k => delete HISTC[k]);
+    await refresh(); softRender();
+    const r = parseRoute(); if (r.parts[0] === "machine") loadHist(r.parts[1]); if (r.parts[0] === "activite") loadActivite(true);
+  }, 30);
+}
+async function askUndoOne(hids) {
+  const rows = hids.map(i => HROWS[i]).filter(Boolean); if (!rows.length) return;
+  const b = await undoBlocked(); if (b) return infoModal("Pas tout de suite", `<p class="mq">${esc(b)}</p>`);
+  const h = rows[0], qui = nomDe(h.par) || h._auteur || "";
+  openModal({ title: "Annuler cette modif ?", center: true, ok: "Oui, annuler la modif", okColor: "#c62828", cancel: "Non, garder",
+    html: `<p class="mq">Es-tu sûr de vouloir annuler cette modification ?</p><div class="box2"><b>${esc(mname(h.machine_id))}</b>${rows.map(r => `<div style="margin-top:4px">${undoTxt(r)}</div>`).join("")}</div>
+      <p class="muted">Modif faite${qui ? ` par ${esc(qui)}` : ""} le ${dateHeure(h.at)}. L'annulation sera notée dans l'historique.</p>`,
+    onOk: async () => {
+      const { data, error } = await supa.rpc("annuler", { p_ids: rows.map(r => r.id) });
+      if (error || !data) { $("#m-msg").innerHTML = `<div class="msg err">${isNetErr(error) ? "Pas de réseau : réessaie dans un instant." : "Le serveur a refusé (" + esc(error && error.message) + ")."}</div>`; return false; }
+      afterUndo(data); return true;
+    } });
+}
+async function askUndoAll() {
+  const b = await undoBlocked(); if (b) return infoModal("Pas tout de suite", `<p class="mq">${esc(b)}</p>`);
+  const f = actFilter(), qui = f.par ? nomDe(f.par) : "";
+  const { data, error } = await supa.rpc("annuler", { p_par: f.par, p_depuis: f.depuis, p_essai: true });
+  if (error || !data) return infoModal("Impossible pour le moment", `<p class="mq">${isNetErr(error) ? "Pas de réseau : réessaie dans un instant." : esc(error && error.message)}</p>`);
+  if (!data.fait) return infoModal("Rien à annuler", `<p class="mq">Aucune modif annulable${qui ? ` ${esc(deNom(qui))}` : ""} sur cette période.</p>${data.garde.length ? `<p class="muted">Gardées car changées ensuite : ${gardeTxt(data.garde)}.</p>` : ""}`);
+  const L = data.liste;
+  openModal({ title: "Tout annuler ?", center: true, ok: "Oui, tout remettre comme avant", okColor: "#c62828", cancel: "Non, garder",
+    html: `<p class="mq">Es-tu sûr de vouloir annuler <b>tout ce ${qui ? `qu${/^[aeiouyéèêh]/i.test(qui) ? "'" : "e "}${esc(qui)} a fait` : "qui a été fait"}</b> (${esc(f.label)}) ? Ça touche <b>${data.machines} machine${data.machines > 1 ? "s" : ""}</b> :</p>
+      <ul class="hist" style="font-size:14px">${L.slice(0, 5).map(x => `<li>${listeTxt(x)}</li>`).join("")}${L.length > 5 ? `<li class="muted">… et ${L.length - 5} autre${L.length - 5 > 1 ? "s" : ""}</li>` : ""}</ul>
+      ${data.garde.length ? `<div class="warnbox">⚠️ <b>${data.garde.length} modif${data.garde.length > 1 ? "s" : ""} gardée${data.garde.length > 1 ? "s" : ""}</b> : ${gardeTxt(data.garde)}.</div>` : ""}
+      <p class="muted">L'annulation sera notée dans l'historique.</p>`,
+    onOk: async () => {
+      const r2 = await supa.rpc("annuler", { p_par: f.par, p_depuis: f.depuis, p_essai: false });
+      if (r2.error || !r2.data) { $("#m-msg").innerHTML = `<div class="msg err">${isNetErr(r2.error) ? "Pas de réseau : réessaie dans un instant." : "Le serveur a refusé (" + esc(r2.error && r2.error.message) + ")."}</div>`; return false; }
+      afterUndo(r2.data); return true;
+    } });
+}
+
+/* ---------- écran Activité (chefs) ---------- */
+const ACT = { key: "", rows: [], more: false, tok: 0 };
+function actFilter() {
+  const q = parseRoute().q, par = q.get("par") || "", p = q.get("p") || "jour", dq = q.get("d") || "";
+  const now = new Date(); let d = new Date(now);
+  if (p === "1h") d = new Date(now.getTime() - 36e5);
+  else if (p === "hier") { d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - 1); }
+  else if (p === "date" && dq && !isNaN(Date.parse(dq))) d = new Date(dq);
+  else d.setHours(0, 0, 0, 0);
+  const label = p === "1h" ? "la dernière heure" : p === "hier" ? "depuis hier" : p === "date" ? `depuis le ${d.toLocaleDateString("fr-FR")} à ${hhmm(d)}` : "aujourd'hui";
+  return { par: par || null, p, d: dq, depuis: d.toISOString(), label, key: `${par}|${p}|${dq}` };
+}
+function actLink(par, p, d) {
+  const u = new URLSearchParams(); if (par) u.set("par", par); if (p && p !== "jour") u.set("p", p); if (p === "date" && d) u.set("d", d);
+  const s = u.toString(); return `#/activite${s ? "?" + s : ""}`;
+}
+function actRowsHTML() {
+  if (!ACT.rows.length) return `<p class="muted">Aucune modif sur cette période.</p>`;
+  const G = groupRows(ACT.rows), n = G.length, nm = new Set(ACT.rows.map(h => h.machine_id)).size;
+  return `<div class="sh"><h3>${n}${ACT.more ? "+" : ""} modif${n > 1 ? "s" : ""} · ${nm} machine${nm > 1 ? "s" : ""}</h3>${isChef() ? `<button class="dots" data-act="dots" data-kind="all" aria-label="Options">⋯</button>` : ""}</div>
+    <ul class="hist">${G.map(g => histLi(g, true)).join("")}</ul>${ACT.more ? `<button class="btn light more" data-act="act-more">Voir plus</button>` : ""}`;
+}
+function viewActivite() {
+  if (!isChef()) return viewHome();
+  const f = actFilter();
+  const people = Object.entries(S.membres).sort((a, b) => (b[1].role === "chef") - (a[1].role === "chef") || natural(a[1].nom || "", b[1].nom || ""));
+  const chip = (on, h, txt) => `<button class="chip ${on ? "on" : ""}" data-act="act-f" data-h="${esc(h)}">${txt}</button>`;
+  return header("Activité", "Qui a fait quoi", { right: `<button class="smallbtn" data-act="go" data-h="#/acces">👥 Accès</button>` }) + `<main>
+    <div class="sect"><h3>Qui ?</h3><div class="chips">${chip(!f.par, actLink("", f.p, f.d), "Tout le monde")}${people.map(([uid, m]) => chip(f.par === uid, actLink(uid, f.p, f.d), esc(m.nom || "Sans prénom"))).join("")}</div>
+      <h3>Depuis quand ?</h3><div class="chips" style="padding-bottom:2px">${chip(f.p === "1h", actLink(f.par, "1h"), "1 heure")}${chip(f.p === "jour", actLink(f.par, "jour"), "Aujourd'hui")}${chip(f.p === "hier", actLink(f.par, "hier"), "Depuis hier")}
+      <button class="chip ${f.p === "date" ? "on" : ""}" data-act="act-date">📅 ${f.p === "date" ? esc(f.label.replace("depuis le ", "")) : "Choisir…"}</button></div></div>
+    <div class="sect" id="act-list">${ACT.key === f.key ? actRowsHTML() : `<p class="muted">Chargement…</p>`}</div></main>`;
+}
+async function loadActivite(reset) {
+  const f = actFilter(), tok = ++ACT.tok;
+  const box0 = $("#act-list");
+  if (!supa || !navigator.onLine) { if (box0 && ACT.key !== f.key) box0.innerHTML = `<p class="muted">Visible quand il y a du réseau.</p>`; return; }
+  const from = reset || ACT.key !== f.key ? 0 : ACT.rows.length;
+  let q = supa.from("historique").select("*").gte("at", f.depuis); if (f.par) q = q.eq("par", f.par);
+  const { data, error } = await q.order("at", { ascending: false }).order("id", { ascending: false }).range(from, from + 199);
+  let an = []; try { an = await fetchAll("historique", "id", x => x.gte("at", f.depuis).not("annule", "is", null)); } catch (e) {}
+  if (tok !== ACT.tok) return;
+  if (error) { const b = $("#act-list"); if (b) b.innerHTML = `<p class="muted">Activité indisponible pour le moment.</p>`; return; }
+  an.forEach(h => ANN[h.annule] = { par: h.par, at: h.at });
+  ACT.rows = from ? ACT.rows.concat(data || []) : (data || []); ACT.key = f.key; ACT.more = (data || []).length === 200;
+  const b = $("#act-list"); if (b && parseRoute().parts[0] === "activite") b.innerHTML = actRowsHTML();
+}
+
+/* ---------- écran Accès à l'appli (chefs) ---------- */
+let ACC = null;
+function viewAcces() {
+  if (!isChef()) return viewHome();
+  return header("Accès à l'appli", "Cyril et Nico seulement") + `<main><div class="sect"><h3>Comptes</h3><div id="acc-list">${ACC ? accHTML() : `<p class="muted">Chargement…</p>`}</div></div>
+    <div class="sect"><p class="muted" style="margin:0">Couper l'accès déconnecte la personne à la prochaine ouverture de l'appli. Rien n'est effacé, et on peut lui rendre l'accès.</p>
+    <p class="muted" style="margin:8px 0 0">Un nouveau compte apparaît ici après sa première connexion, en Équipier.</p></div></main>`;
+}
+function accHTML() {
+  if (!ACC.length) return `<p class="muted">Aucun compte.</p>`;
+  return ACC.map(m => {
+    const chef = m.role === "chef", pause = m.pause ? hhmm(new Date(m.pause)) : "";
+    const badge = !m.actif ? `<span class="role off">Accès coupé</span>` : `<span class="role ${chef ? "chef" : "eq"}">${chef ? "Chef" : "Équipier"}</span>`;
+    const info = chef ? "" : ` <span class="muted">· ${m.aujourdhui} modif${m.aujourdhui > 1 ? "s" : ""} aujourd'hui${pause ? ` · ⏸️ en pause jusqu'à ${pause}` : ""}</span>`;
+    const right = chef ? (m.nom === "Cyril" ? `<span class="muted">Propriétaire</span>` : "")
+      : `<button class="dots" data-act="dots" data-kind="acc" data-uid="${esc(m.id)}" data-actif="${m.actif ? 1 : 0}" data-pause="${esc(pause)}" aria-label="Options">⋯</button>`;
+    return `<div class="acc"><div class="nm"><b>${esc(m.nom || "(sans prénom)")}</b><br>${badge}${info}</div>${right}</div>`;
+  }).join("");
+}
+async function loadAcces() {
+  const b0 = $("#acc-list");
+  if (!supa || !navigator.onLine) { if (b0 && !ACC) b0.innerHTML = `<p class="muted">Visible quand il y a du réseau.</p>`; return; }
+  const { data, error } = await supa.rpc("membres_liste");
+  if (error || !data) { const b = $("#acc-list"); if (b && !ACC) b.innerHTML = `<p class="muted">Liste indisponible pour le moment.</p>`; return; }
+  ACC = data; const b = $("#acc-list"); if (b) b.innerHTML = accHTML();
+}
+function askAcces(uid, action) {
+  const m = (ACC || []).find(x => x.id === uid); if (!m) return;
+  const T = {
+    couper: { t: `Couper l'accès ${deNom(m.nom)} ?`, h: `Es-tu sûr de vouloir couper l'accès ${esc(deNom(m.nom))} ? ${esc(m.nom)} ne pourra plus rien voir ni modifier. Ses modifs passées restent dans l'historique.</p><p class="muted">Tu pourras lui rendre l'accès quand tu veux.`, ok: "Oui, couper", c: "#c62828" },
+    rendre: { t: `Rendre l'accès à ${m.nom} ?`, h: `${esc(m.nom)} pourra de nouveau utiliser l'appli, en Équipier.`, ok: "Oui, rendre l'accès" },
+    lever_pause: { t: `Lever la pause ${deNom(m.nom)} ?`, h: `Ses modifs en attente partiront tout de suite, et le compteur repart de zéro.`, ok: "Oui, lever la pause" },
+  }[action];
+  openModal({ title: esc(T.t), center: true, ok: T.ok, okColor: T.c, cancel: "Non, annuler", html: `<p class="mq">${T.h}</p>`,
+    onOk: async () => {
+      if (!navigator.onLine) { $("#m-msg").innerHTML = `<div class="msg err">Il faut du réseau pour ça.</div>`; return false; }
+      const { data, error } = await supa.rpc("membre_action", { p_id: uid, p_action: action });
+      if (error || !data) { $("#m-msg").innerHTML = `<div class="msg err">${isNetErr(error) ? "Pas de réseau : réessaie dans un instant." : "Refusé (" + esc(error && error.message) + ")."}</div>`; return false; }
+      ACC = data; setTimeout(() => { const b = $("#acc-list"); if (b) b.innerHTML = accHTML(); }, 0); return true;
+    } });
 }
 
 function viewAjout(fid) {
@@ -625,6 +869,8 @@ function viewAjout(fid) {
 let pendingRender = false, focusSearch = false;
 function render(nav) {
   if (!USER) return;
+  if (ROLE === "coupe") return viewCoupe();
+  closePops();
   const r = parseRoute(); const [a, b] = r.parts;
   if (nav && DRAFT && !(a === "machine" && b === DRAFT.id)) { /* on garde le brouillon pour le retour sur la fiche */ }
   let html;
@@ -635,11 +881,15 @@ function render(nav) {
   else if (a === "tout") html = viewTout(r.q);
   else if (a === "machine") html = viewMachine(b);
   else if (a === "ajouter") html = viewAjout(b);
+  else if (a === "activite") html = viewActivite();
+  else if (a === "acces") html = viewAcces();
   else html = viewHome();
   const y = nav ? (scrolls[r.key] || 0) : window.scrollY;
   $("#app").innerHTML = html;
   window.scrollTo(0, y);
-  if (a === "machine") { if (nav) loadHist(b); showPhotos(); }
+  if (a === "machine") { loadHist(b); showPhotos(); }
+  if (a === "activite" && isChef() && (nav || ACT.key !== actFilter().key)) loadActivite(true);
+  if (a === "acces" && isChef() && nav) loadAcces();
   if (a === "equipe") showPhotos();
   if (a === "tout" && focusSearch) { focusSearch = false; const s = $("#search"); if (s) { s.focus(); const n = s.value.length; try { s.setSelectionRange(n, n); } catch (_) {} } }
   pendingRender = false;
@@ -734,8 +984,33 @@ function askPret(id) {
 
 /* ---------- actions ---------- */
 document.addEventListener("click", async e => {
+  if (!e.target.closest(".pop") && !e.target.closest("[data-act=dots]")) closePops();
   const t = e.target.closest("[data-act]"); if (!t) return;
   const act = t.dataset.act, r = parseRoute();
+  if (act === "dots") {
+    const was = t.classList.contains("on"); closePops(); if (was) return;
+    const k = t.dataset.kind; let menu = "";
+    if (k === "row") menu = `<button data-act="undo-one" data-hid="${esc(t.dataset.hid)}">↩️ Annuler cette modif</button>`;
+    if (k === "all") { const f = actFilter(); menu = `<button data-act="undo-all">↩️ Tout annuler (${esc(f.par ? nomDe(f.par) : "tout le monde")}, ${esc(f.label)})</button>`; }
+    if (k === "acc") menu = (t.dataset.actif === "1" ? `<button data-act="acc" data-a="couper" data-uid="${esc(t.dataset.uid)}">⛔ Couper l'accès</button>` : `<button class="n" data-act="acc" data-a="rendre" data-uid="${esc(t.dataset.uid)}">✅ Rendre l'accès</button>`)
+      + (t.dataset.pause ? `<button class="n" data-act="acc" data-a="lever_pause" data-uid="${esc(t.dataset.uid)}">▶️ Lever la pause</button>` : "");
+    t.classList.add("on"); const pop = document.createElement("div"); pop.className = "pop"; pop.innerHTML = menu; t.parentNode.appendChild(pop);
+    return;
+  }
+  if (act === "undo-one") { closePops(); if (isChef()) askUndoOne(String(t.dataset.hid).split(",").map(Number)); return; }
+  if (act === "undo-all") { closePops(); if (isChef()) askUndoAll(); return; }
+  if (act === "acc") { closePops(); if (isChef()) askAcces(t.dataset.uid, t.dataset.a); return; }
+  if (act === "go") return go(t.dataset.h);
+  if (act === "act-f") { replaceTo(t.dataset.h); return; }
+  if (act === "act-more") { t.disabled = true; t.textContent = "Chargement…"; loadActivite(false); return; }
+  if (act === "act-date") {
+    const f = actFilter(), d = new Date(f.depuis), pad = n => String(n).padStart(2, "0");
+    const v = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    openModal({ title: "Depuis quand ?", center: true, ok: "Afficher", cancel: "Fermer", html: `<label class="f" for="m-dt">Date et heure</label><input class="inp" id="m-dt" type="datetime-local" value="${v}">`,
+      onOk: () => { const x = mval("m-dt"); if (!x || isNaN(Date.parse(x))) { $("#m-msg").innerHTML = `<div class="msg err">Choisis une date et une heure.</div>`; return false; }
+        setTimeout(() => replaceTo(actLink(f.par, "date", x)), 0); return true; } });
+    return;
+  }
   if (act === "m-cancel") return closeModal();
   if (act === "m-ok") {
     if (!MODAL) return; t.disabled = true;
@@ -754,6 +1029,7 @@ document.addEventListener("click", async e => {
   if (act === "sort") { famSort = t.dataset.v; render(false); return; }
   if (act === "add") return go(`#/ajouter/${t.dataset.fam}`);
   if (act === "zoom") { const url = await photoURL(t.dataset.key); if (url) openModal({ title: "Photo", html: `<img src="${url}" style="width:100%;border-radius:12px" alt="">`, ok: "Fermer", cancel: "Retour" }); return; }
+  if ((act === "chef" || act === "team-add") && !isChef()) return;
   if (act === "chef" || act === "team-add") {
     const isNew = act === "team-add", n = isNew ? (Math.max(0, ...teamNums()) + 1) : +t.dataset.n;
     openModal({
@@ -816,7 +1092,7 @@ document.addEventListener("click", async e => {
       } });
     return;
   }
-  if (act === "actif" && id) {
+  if (act === "actif" && id && isChef()) {
     const m = S.machines[id], off = m.actif !== false;
     openModal({
       title: off ? `Retirer ${esc(m.id)} ?` : `Remettre ${esc(m.id)} ?`,
@@ -939,8 +1215,8 @@ async function sendPhotos() {
   try {
     for (const p of [...PHOTOS_WAIT]) {
       const rec = await idbGet(p.key); if (!rec) { PHOTOS_WAIT = PHOTOS_WAIT.filter(x => x.key !== p.key); continue; }
-      const { error } = await supa.storage.from("photos").upload(p.key, rec.blob, { contentType: "image/jpeg", upsert: true });
-      if (error) throw error;
+      const { error } = await supa.storage.from("photos").upload(p.key, rec.blob, { contentType: "image/jpeg", upsert: false });
+      if (error && !/exist|duplicate|409/i.test(`${error.message} ${error.statusCode} ${error.error}`)) throw error;   // déjà en ligne = envoyée
       rec.sent = true; await idbPut(p.key, rec);   // la copie locale reste sur le téléphone
       PHOTOS_WAIT = PHOTOS_WAIT.filter(x => x.key !== p.key);
       const pid = resolveId(p.id);
@@ -1043,8 +1319,12 @@ async function start() {
   $("#status").classList.remove("hidden"); updateStatus();
   await loadPhotoQueue(); sendPhotos();
   if (REJ.length) { REJ.forEach(o => { o.err = 0; Q.push(o); }); REJ = []; saveLocal(); }
+  if (ROLE === "coupe") { viewCoupe(); await whoami(); if (ROLE !== "coupe") location.reload(); return; }
   const hasCache = Object.keys(S.machines).length > 0;
   if (hasCache) render(true);
+  await whoami();
+  if (ROLE === "coupe") { viewCoupe(); return; }
+  if (hasCache) render(false);
   const lm = $("#loader-msg"); if (lm) lm.textContent = "Synchronisation en cours…";
   const timer = setTimeout(() => { if (hasCache) hideLoader(); }, 6000);
   await flush();

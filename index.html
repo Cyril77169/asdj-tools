@@ -208,6 +208,34 @@ body.noscroll{overflow:hidden}
 .mbtns{display:grid;grid-template-columns:1fr 1.4fr;gap:10px;margin-top:16px}
 .mlist{margin:0;padding-left:20px;font-size:15px;line-height:1.6}
 .pick{margin-top:2px}
+/* rôles, journal, annulations (v7) */
+.who{display:inline-block;font-weight:800;padding:1px 8px;border-radius:999px;font-size:12px;margin-right:4px;background:#fff1d6;color:#8a5a00}
+.who.c{background:#e5f6e8;color:#1b6b2e}.who.n{background:#e3f0ff;color:#1a4f9c}
+.hrow{display:flex;gap:6px;align-items:center;position:relative}.hrow .tx{flex:1;min-width:0}
+.dots{border:0;background:transparent;color:#8a8f8a;font-size:22px;font-weight:900;line-height:1;padding:4px 8px;border-radius:10px;letter-spacing:1px;cursor:pointer;flex:none}
+.dots.on{background:#eef2ee;color:#333}
+.pop{position:absolute;right:4px;top:calc(100% - 6px);z-index:20;background:#fff;border-radius:14px;box-shadow:0 8px 28px rgba(0,0,0,.22);padding:6px;min-width:220px}
+.pop button{display:block;width:100%;text-align:left;border:0;background:transparent;padding:12px;font-size:15px;font-weight:700;border-radius:10px;color:#a3261b;cursor:pointer}
+.pop button.n{color:#333}
+.undone{text-decoration:line-through;color:#999}.undone .who{opacity:.6}
+.tag{font-size:12px;color:#777;display:block;text-decoration:none}
+.evlist li{position:relative}.evlist li.undone{opacity:.6}.evlist li.undone .evtxt>b,.evlist li.undone .evtxt>div,.evlist li.undone .evm{text-decoration:line-through}
+.thin{display:flex;align-items:center;justify-content:center;gap:6px;margin:14px auto 0;padding:8px 10px;color:var(--muted);font-size:13px;font-weight:600}
+.thin u{text-decoration:none;border-bottom:1px dotted #9aa}
+.smallbtn{border:0;background:rgba(255,255,255,.18);color:#fff;font-weight:700;border-radius:999px;padding:8px 12px;font-size:13px;flex:none;cursor:pointer}
+.sh{display:flex;align-items:center;justify-content:space-between;position:relative;margin-bottom:6px}.sh h3{margin:0}
+.acc{display:flex;align-items:center;gap:8px;padding:12px 0;border-bottom:1px solid var(--line);position:relative}
+.acc:last-child{border-bottom:0}.acc .nm{flex:1}.acc .nm b{font-size:16px}
+.role{font-size:12px;font-weight:800;padding:2px 8px;border-radius:999px}
+.role.chef{background:#e5f6e8;color:#1b6b2e}.role.eq{background:#fff1d6;color:#8a5a00}.role.off{background:#ffe1df;color:#8a1c14}
+.lock{display:flex;gap:8px;align-items:center;background:#f2f2f4;color:#555;border-radius:12px;padding:10px 12px;font-size:14px;font-weight:600;margin:6px 0}
+.btn.dis{background:#e9e9ec!important;color:#9a9aa0!important;cursor:default}
+.inp:disabled{background:#f2f2f4;color:#9a9aa0}
+.box2{background:#f4f6f4;border-radius:12px;padding:10px 12px;margin:8px 0}
+.warnbox{background:#fff6e0;border-radius:12px;padding:10px 12px;font-size:14px;margin-top:8px}
+#modal.center{align-items:center;padding:20px}#modal.center .mbox{border-radius:22px;padding-bottom:18px}
+.more{margin-top:10px}
+.mbtns.one{grid-template-columns:1fr}
 /* barre « enregistrer » */
 .savebar{position:fixed;left:0;right:0;bottom:calc(44px + var(--safe-b));z-index:15;background:#fff8e1;border-top:2px solid #f3d27a;padding:10px 12px;display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;font-weight:700;font-size:14px}
 .savebar .btn{padding:11px 14px;font-size:15px;width:auto}
@@ -270,8 +298,8 @@ label.check input{width:22px;height:22px;accent-color:var(--green-dark)}
 <div id="app"></div>
 <div id="status" class="hidden"><i></i><span id="status-txt">…</span><span class="sp"></span></div>
 <script src="vendor/supabase.js"></script>
-<script src="config.js?v=6"></script>
-<script src="app.js?v=6"></script>
-<script>if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js?v=6");</script>
+<script src="config.js?v=7"></script>
+<script src="app.js?v=7"></script>
+<script>if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js?v=7");</script>
 </body>
 </html>
