@@ -568,7 +568,7 @@ function viewAjout(fid) {
   const teamOpts = `<option value="">Dépôt</option>` + teamNums().map(n => `<option value="${n}">${esc(teamLabel(n))}</option>`).join("");
   return header(`Ajouter : ${f.un}`, "Nouvelle machine", { fam: f.id }) + `<main><div class="sect">
     <label class="f" for="a-num" style="margin-top:0">Numéro interne (ex. : ${({ tondeuse: "T14", debroussailleuse: "D08", souffleur: "S08", taillehaie: "TH08", tronconneuse: "TR11", autoportee: "A01", motoculteur: "MC01", scarificateur: "SC01", outillage: "OU01" })[f.id] || "X01"})</label><input class="inp" id="a-num" autocapitalize="characters" autocomplete="off">
-    <label class="check"><input type="checkbox" id="a-nonum"><span><b>Sans numéro</b><br><span class="muted">Cet appareil n'a pas de numéro, c'est voulu.</span></span></label>
+    <label class="check"><input type="checkbox" id="a-nonum"><span><b>Sans numéro</b><br><span class="muted">Cet appareil n'a pas de numéro.</span></span></label>
     <label class="f" for="a-mod">Modèle (ex. : HRX 537)</label><input class="inp" id="a-mod" autocomplete="off">
     <label class="f" for="a-eq">Équipe</label><select class="inp" id="a-eq">${teamOpts}</select>
     <div id="a-msg"></div><div style="height:14px"></div>
