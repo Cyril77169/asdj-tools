@@ -82,7 +82,7 @@ const frDate = iso => { if (!iso) return ""; const [y, m, d] = String(iso).slice
 const daysSince = iso => { if (!iso) return null; const t = Date.parse(String(iso).slice(0, 10) + "T00:00:00"); return Math.max(0, Math.round((Date.parse(today() + "T00:00:00") - t) / 864e5)); };
 const sinceTxt = iso => { const n = daysSince(iso); if (n == null) return ""; return `depuis le ${frDate(iso)}` + (n === 0 ? " (aujourd'hui)" : ` (${n} j)`); };
 const chef = n => (S.equipes[n] && S.equipes[n].chef) || "";
-const teamLabel = n => n == null || n === "" ? "Sans équipe" : `Équipe ${n}` + (chef(n) ? ` · ${chef(n)}` : "");
+const teamLabel = n => n == null || n === "" ? "Dépôt" : `Équipe ${n}` + (chef(n) ? ` · ${chef(n)}` : "");
 const natural = (a, b) => a.localeCompare(b, "fr", { numeric: true });
 const norm = t => String(t ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 const prio = m => PRIO[m.statut] ?? 9;
@@ -100,6 +100,8 @@ function repPicker(id, cur, field) {
     <button type="button" class="repc plus ${other ? "on" : ""}" data-act="rep-other">+ Autre</button></div>
     <input class="inp ${other ? "" : "hidden"}" id="${id}" ${field ? `data-field="${field}"` : ""} value="${esc(cur || "")}" placeholder="Nom du réparateur" autocomplete="off">`;
 }
+const noNum = m => String(m.id || m).startsWith("SN-");
+const disp = m => noNum(m) ? "Sans n°" : (m.id || m);
 const statMatch = (m, sel) => !sel || (sel === "attribuee" ? ATTRIB.includes(m.statut) : m.statut === sel);
 function whereTxt(m) {
   if (m.statut === "reparation" || m.lieu === "reparateur") return `Chez ${m.reparateur || "le réparateur"}` + ((m.depose_le || m.depuis) ? ` · ${sinceTxt(m.depose_le || m.depuis)}` : "") + (m.depose_par ? ` · déposée par ${m.depose_par}` : "");
@@ -326,7 +328,7 @@ function header(title, sub, opts = {}) {
 function cardHTML(m) {
   return `<a class="card ${m.actif === false ? "off" : ""}" href="#/machine/${encodeURIComponent(m.id)}" style="--c:${sc(m.statut)}">
     <span class="stripe"></span>
-    <span class="body"><span class="num">${esc(m.id)}</span><span class="mod">${esc(m.modele)}</span><div class="where">${esc(whereTxt(m))}</div></span>
+    <span class="body"><span class="num ${noNum(m) ? "nonum" : ""}">${esc(disp(m))}</span><span class="mod">${esc(m.modele)}</span><div class="where">${esc(whereTxt(m))}</div></span>
     <span class="side"><span class="pill">${esc(ST[m.statut] ? ST[m.statut].nom : m.statut)}</span></span></a>`;
 }
 function summaryHTML(list, base) {
@@ -370,7 +372,7 @@ function viewFamille(fid, q) {
   if (famSort === "equipe") {
     const groups = {};
     list.forEach(m => { const k = m.equipe == null ? "z" : String(m.equipe).padStart(3, "0"); (groups[k] = groups[k] || []).push(m); });
-    body = Object.keys(groups).sort().map(k => `<div class="group-h">${esc(k === "z" ? "Sans équipe (dépôt)" : teamLabel(+k))}</div><div class="list">${groups[k].sort(byAlert).map(cardHTML).join("")}</div>`).join("");
+    body = Object.keys(groups).sort().map(k => `<div class="group-h">${esc(k === "z" ? "Dépôt" : teamLabel(+k))}</div><div class="list">${groups[k].sort(byAlert).map(cardHTML).join("")}</div>`).join("");
   } else body = `<div class="list">${list.sort((a, b) => natural(a.id, b.id)).map(cardHTML).join("")}</div>`;
   if (!list.length) body = `<div class="empty">Aucune machine ici.</div>`;
   const retired = off.length ? `<details class="retired"><summary>Machines retirées du parc (${off.length})</summary><div class="list">${off.sort((a, b) => natural(a.id, b.id)).map(cardHTML).join("")}</div></details>` : "";
@@ -397,7 +399,7 @@ function viewEquipes() {
   const dep = all.filter(m => m.equipe == null);
   return header("Les équipes", "Le matériel de chaque chef") + `<main>${cards}<div class="list" style="margin-top:12px">
     <a class="card" href="#/equipe/depot" style="--c:var(--s-disponible)"><span class="stripe"></span><span class="body team"><span class="badge depot">D</span>
-      <span style="flex:1;min-width:0"><span class="num" style="font-size:18px">Sans équipe</span><div class="where">${dep.length} machine${dep.length > 1 ? "s" : ""} au dépôt ou en réparation</div>${barHTML(dep)}</span></span></a>
+      <span style="flex:1;min-width:0"><span class="num" style="font-size:18px">Dépôt</span><div class="where">${dep.length} machine${dep.length > 1 ? "s" : ""} au dépôt ou en réparation</div>${barHTML(dep)}</span></span></a>
   </div><div class="addbar"><button class="btn light" data-act="team-add">+ Ajouter une équipe</button></div></main>`;
 }
 function viewEquipe(id, q) {
@@ -410,7 +412,7 @@ function viewEquipe(id, q) {
   const body = fams.map(({ f, l }) => l.length ? `<div class="group-h"><span style="color:${fc(f.id)}">${ICONS[f.id]}</span>${esc(f.nom)} · ${l.length}</div><div class="list">${l.map(cardHTML).join("")}</div>` : "").join("")
     || `<div class="empty">Aucune machine ici.</div>`;
   const edit = isDep ? "" : `<button class="iconbtn" data-act="chef" data-n="${n}" aria-label="Changer le chef">✎</button>`;
-  return header(isDep ? "Sans équipe" : `Équipe ${n}`, isDep ? "Au dépôt ou en réparation" : (chef(n) ? `Chef : ${chef(n)}` : "Chef à indiquer"), { right: edit }) +
+  return header(isDep ? "Dépôt" : `Équipe ${n}`, isDep ? "Au dépôt ou en réparation" : (chef(n) ? `Chef : ${chef(n)}` : "Chef à indiquer"), { right: edit }) +
     `<main>${summaryHTML(all, `#/equipe/${id}?`)}${sel ? `<div class="filtre">Filtre : <b>${esc(sel === "attribuee" ? "Attribuées" : ST[sel].nom)}</b> <a href="#/equipe/${id}">✕ retirer</a></div>` : ""}${body}
     <div class="sect" style="margin-top:18px"><h3>Historique de l'équipe : pannes, réparations, prêts</h3>${teamHistHTML(n)}</div></main>`;
 }
@@ -419,7 +421,7 @@ function viewTout(q) {
   const all = actives();
   const list = all.filter(m => statMatch(m, sel) &&
     (!txt || txt.split(/\s+/).every(w => norm([m.id, m.modele, (m.modele || "").replace(/\s+/g, ""), FAM[m.famille] && FAM[m.famille].un, FAM[m.famille] && FAM[m.famille].nom,
-      chef(m.equipe), m.equipe != null ? `equipe ${m.equipe}` : "sans equipe", ST[m.statut] && ST[m.statut].nom, LIEUX[m.lieu], m.reparateur, m.depose_par, m.recupere_par, m.pret_a, m.lieu === "pret" ? "pretee pret" : "", m.notes, m.motif].join(" ")).includes(w))))
+      chef(m.equipe), m.equipe != null ? `equipe ${m.equipe}` : "depot sans equipe", noNum(m) ? "sans numero sans n" : "", ST[m.statut] && ST[m.statut].nom, LIEUX[m.lieu], m.reparateur, m.depose_par, m.recupere_par, m.pret_a, m.lieu === "pret" ? "pretee pret" : "", m.notes, m.motif].join(" ")).includes(w))))
     .sort(byAlert);
   const base = `#/tout${txt ? `?q=${encodeURIComponent(q.get("q").trim())}` : ""}`;
   return header("Toutes les machines", `${all.length} machines`) +
@@ -460,7 +462,7 @@ function teamHistHTML(n) {
     <ul class="evlist">${ev.slice(0, 60).map(e => {
       const t = EVT[e.type] || { nom: e.type, c: "hs" }, d = new Date(e.at), mm = S.machines[e.id];
       return `<li style="--c:${sc(t.c)}"><a class="evtxt" href="#/machine/${encodeURIComponent(e.id)}"><time>${d.toLocaleDateString("fr-FR")} à ${d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</time>
-        <span class="evm">${mm ? `<span class="evic" style="color:${fc(mm.famille)}">${ICONS[mm.famille]}</span>` : ""}<b>${esc(e.id)}</b> · ${esc(t.nom)}</span>${evLines(e).map(l => `<div>${esc(l)}</div>`).join("")}</a>
+        <span class="evm">${mm ? `<span class="evic" style="color:${fc(mm.famille)}">${ICONS[mm.famille]}</span>` : ""}<b>${esc(mm ? disp(mm) : e.id)}${mm && noNum(mm) ? ` (${esc(mm.modele)})` : ""}</b> · ${esc(t.nom)}</span>${evLines(e).map(l => `<div>${esc(l)}</div>`).join("")}</a>
         ${e.photo ? `<button class="thumb" data-act="zoom" data-key="${esc(e.photo)}"><img data-photo="${esc(e.photo)}" alt="Photo"></button>` : ""}</li>`;
     }).join("")}</ul>`;
 }
@@ -494,13 +496,13 @@ function viewMachine(id) {
   if (!m) return header("Machine introuvable") + `<main><div class="empty">Cette machine n'existe pas (ou plus).</div></main>`;
   const f = FAM[m.famille] || { un: m.famille };
   const lieu = dv(m, "lieu"), eq = dv(m, "equipe");
-  const teamOpts = `<option value="">Sans équipe</option>` + teamNums().map(n => `<option value="${n}" ${eq === n ? "selected" : ""}>${esc(teamLabel(n))}</option>`).join("");
+  const teamOpts = `<option value="">Dépôt</option>` + teamNums().map(n => `<option value="${n}" ${eq === n ? "selected" : ""}>${esc(teamLabel(n))}</option>`).join("");
   const famOpts = FAMILLES.map(x => `<option value="${x.id}" ${dv(m, "famille") === x.id ? "selected" : ""}>${esc(x.un)}</option>`).join("");
   const inp = (fld, label, type = "text", ph = "", list = "") => `<label class="f" for="f-${fld}">${label}</label><input class="inp" id="f-${fld}" ${type !== "text" ? `type="${type}"` : ""} ${list ? `list="${list}"` : ""} data-field="${fld}" value="${esc(dv(m, fld) || "")}" placeholder="${esc(ph)}">`;
   const dirty = DRAFT && DRAFT.id === id && Object.keys(DRAFT.v).length;
-  return header(`${m.id} · ${m.modele}`, f.un) + `<main>
+  return header(`${disp(m)} · ${m.modele}`, f.un) + `<main>
     <div class="hero" style="--c:${sc(m.statut)}"><span class="fam">${ICONS[m.famille] || ""}</span>
-      <div class="big">${esc(m.id)}</div><div class="mod">${esc(f.un)} ${esc(m.modele)}</div>
+      <div class="big">${esc(disp(m))}</div><div class="mod">${esc(f.un)} ${esc(m.modele)}</div>
       <div class="st">${esc(ST[m.statut] ? ST[m.statut].nom : m.statut)}</div>
       <div class="since">${esc(whereTxt(m))}</div>${m.motif && URGENTS.includes(m.statut) ? `<div class="since">« ${esc(m.motif)} »</div>` : ""}</div>
 
@@ -529,7 +531,7 @@ function viewMachine(id) {
       ${inp("controle", "Dernier contrôle", "date")}
       <label class="f" for="f-notes">Notes</label><textarea class="inp" id="f-notes" data-field="notes">${esc(dv(m, "notes"))}</textarea>
       <datalist id="noms">${NOMS().map(n => `<option value="${esc(n)}">`).join("")}</datalist>
-      <p class="muted">Le numéro (${esc(m.id)}) ne se modifie pas : en cas d'erreur, retire la machine et recrée-la avec le bon numéro.</p>
+      <p class="muted">Le numéro (${esc(disp(m))}) ne se modifie pas : en cas d'erreur, retire la machine et recrée-la avec le bon numéro.</p>
     </div>
 
     <details class="sect journal"><summary><h3 style="display:inline">Journal de toutes les modifications</h3></summary><ul class="hist" id="hist"><li>Chargement…</li></ul></details>
@@ -563,9 +565,10 @@ async function loadHist(id) {
 
 function viewAjout(fid) {
   const f = FAM[fid] || FAMILLES[0];
-  const teamOpts = `<option value="">Au dépôt (en stock, sans équipe)</option>` + teamNums().map(n => `<option value="${n}">${esc(teamLabel(n))}</option>`).join("");
+  const teamOpts = `<option value="">Dépôt</option>` + teamNums().map(n => `<option value="${n}">${esc(teamLabel(n))}</option>`).join("");
   return header(`Ajouter : ${f.un}`, "Nouvelle machine", { fam: f.id }) + `<main><div class="sect">
-    <label class="f" for="a-num" style="margin-top:0">Numéro interne <span class="muted">(laisse vide : l'appli en donne un)</span> (ex. : ${({ tondeuse: "T14", debroussailleuse: "D08", souffleur: "S08", taillehaie: "TH08", tronconneuse: "TR11", autoportee: "A01", motoculteur: "MC01", scarificateur: "SC01", outillage: "OU01" })[f.id] || "X01"})</label><input class="inp" id="a-num" autocapitalize="characters" autocomplete="off">
+    <label class="f" for="a-num" style="margin-top:0">Numéro interne (ex. : ${({ tondeuse: "T14", debroussailleuse: "D08", souffleur: "S08", taillehaie: "TH08", tronconneuse: "TR11", autoportee: "A01", motoculteur: "MC01", scarificateur: "SC01", outillage: "OU01" })[f.id] || "X01"})</label><input class="inp" id="a-num" autocapitalize="characters" autocomplete="off">
+    <label class="check"><input type="checkbox" id="a-nonum"><span><b>Sans numéro</b><br><span class="muted">Cet appareil n'a pas de numéro, c'est voulu.</span></span></label>
     <label class="f" for="a-mod">Modèle (ex. : HRX 537)</label><input class="inp" id="a-mod" autocomplete="off">
     <label class="f" for="a-eq">Équipe</label><select class="inp" id="a-eq">${teamOpts}</select>
     <div id="a-msg"></div><div style="height:14px"></div>
@@ -753,7 +756,9 @@ document.addEventListener("click", async e => {
   if (act === "save-add") {
     let num = $("#a-num").value.trim().toUpperCase().replace(/\s+/g, ""); const mod = $("#a-mod").value.trim(), eqv = $("#a-eq").value;
     const msg = $("#a-msg");
-    if (!num) num = nextNum(t.dataset.fam);   // pas de numéro : on prend le suivant de la catégorie
+    const sansNum = $("#a-nonum").checked;
+    if (sansNum) num = "SN-" + Date.now().toString(36).toUpperCase();   // identifiant interne, affiché « Sans n° »
+    if (!num) { msg.innerHTML = `<div class="msg err">Indique le numéro, ou coche « Sans numéro ».</div>`; return; }
     if (S.machines[num]) { msg.innerHTML = `<div class="msg err">Le numéro ${esc(num)} existe déjà.</div>`; return; }
     const eq = eqv === "" ? null : +eqv;
     addMachine({ id: num, famille: t.dataset.fam, modele: mod, equipe: eq, affectation: eq != null ? chef(eq) : "", statut: eq != null ? "operationnelle" : "disponible", lieu: eq != null ? "equipe" : "depot", depuis: today(), actif: true, ordre: 1000 });
@@ -796,6 +801,7 @@ document.addEventListener("input", e => {
 let searchT = null;
 document.addEventListener("change", e => {
   const el = e.target;
+  if (el.id === "a-nonum") { $("#a-msg").innerHTML = ""; const n = $("#a-num"); n.disabled = el.checked; if (el.checked) n.value = ""; n.placeholder = el.checked ? "Sans numéro" : ""; }
   if (el.dataset && el.dataset.field) { const r = parseRoute(); if (r.parts[0] === "machine") draftSet(r.parts[1], el.dataset.field, fieldValue(el)); }
 });
 document.addEventListener("focusout", () => { setTimeout(() => { if (pendingRender && !MODAL && !/INPUT|TEXTAREA|SELECT/.test((document.activeElement || {}).tagName || "")) softRender(); }, 100); });
