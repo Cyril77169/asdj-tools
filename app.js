@@ -1,7 +1,7 @@
 /* ASDJ - Tools : suivi du matériel par famille et par équipe.
    Données partagées entre les comptes connectés (Supabase), copie locale + file d'attente pour le hors ligne. */
 "use strict";
-const APP_V = 4;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
+const APP_V = 5;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
 const CFG = window.APP_CONFIG;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -166,7 +166,30 @@ function mergeEquipe(r) {
   Q.filter(o => o.k === "eq" && o.n === r.numero).forEach(applyOp);
 }
 const isNetErr = e => !navigator.onLine || /fetch|network|Failed|timeout|Load failed/i.test(String(e && (e.message || e)));
-let flushing = false, flushTimer = null;
+let flushing = false, flushTimer = null, flushGen = 0;
+const RENAMES = (() => { try { return JSON.parse(localStorage.getItem("asdj_renames") || "{}"); } catch (e) { return {}; } })();
+const resolveId = id => { let c = id, g = 0; while (RENAMES[c] && g++ < 10) c = RENAMES[c]; return c; };
+/* retrouve le nouveau numéro d'une machine renumérotée (sur l'autre téléphone) grâce à l'historique */
+async function findNewId(old) {
+  let cur = resolveId(old);
+  for (let g = 0; g < 10; g++) {
+    const { data, error } = await supa.from("historique").select("nouveau").eq("champ", "numero").eq("ancien", cur).order("at", { ascending: false }).limit(1);
+    if (error || !data || !data.length || !data[0].nouveau) break;
+    cur = data[0].nouveau;
+  }
+  return cur !== old ? cur : null;
+}
+/* toutes les modifs en attente de l'ancien numéro passent sur le nouveau (rien n'est perdu) */
+function retarget(oldId, nid) {
+  RENAMES[oldId] = nid; try { localStorage.setItem("asdj_renames", JSON.stringify(RENAMES)); } catch (e) {}
+  Q.forEach(o => { if (o.id === oldId) o.id = nid; if (o.ev && o.ev.id === oldId) o.ev.id = nid; if (o.row && o.row.id === oldId) o.row.id = nid; });
+  PHOTOS_WAIT.forEach(p => { if (p.id === oldId) p.id = nid; });
+  S.events.forEach(e => { if (e.id === oldId) e.id = nid; });
+  if (S.machines[oldId] && !S.machines[nid]) { S.machines[nid] = Object.assign({}, S.machines[oldId], { id: nid }); }
+  delete S.machines[oldId];
+  if (latestLocal[oldId]) { latestLocal[nid] = latestLocal[oldId]; delete latestLocal[oldId]; }
+  if (DRAFT && DRAFT.id === oldId) DRAFT.id = nid;
+}
 function flushSoon() { clearTimeout(flushTimer); flushTimer = setTimeout(flush, 250); }
 async function flush() {
   if (flushing || !supa || !USER) return;
@@ -176,16 +199,31 @@ async function flush() {
     while (Q.length) {
       const op = Q[0]; let res;
       if (op.k === "f") res = await supa.rpc("maj_champ", { p_id: op.id, p_champ: op.c, p_valeur: op.v == null ? "" : String(op.v), p_ts: new Date(op.ts).toISOString() });
-      else if (op.k === "new") res = await supa.from("machines").upsert(op.row, { onConflict: "id", ignoreDuplicates: true });
+      else if (op.k === "new") {
+        const ex = await supa.from("machines").select("id").eq("id", op.row.id).limit(1);
+        if (ex.error) throw ex.error;
+        if (ex.data && ex.data.length && !op.sent) {   // numéro déjà pris entre-temps : on garde notre machine sous un numéro libre
+          let n = 2; while (S.machines[`${op.row.id}-${n}`]) n++;
+          const nid = `${op.row.id}-${n}`; const mine = S.machines[op.row.id];
+          retarget(op.row.id, nid); if (mine) S.machines[nid] = Object.assign({}, mine, { id: nid });
+          op.row = Object.assign({}, op.row, { id: nid, notes: ((op.row.notes || "") + " (numéro déjà pris : renommée automatiquement)").trim() });
+        }
+        op.sent = true; saveLocal();
+        res = await supa.from("machines").upsert(op.row, { onConflict: "id", ignoreDuplicates: true });
+      }
       else if (op.k === "eq") res = await supa.from("equipes").upsert({ numero: op.n, chef: op.v, updated_at: new Date(op.ts).toISOString() });
       else if (op.k === "ev") res = await supa.from("historique").insert({ machine_id: op.ev.id, champ: "evenement", nouveau: JSON.stringify(op.ev) });
+      if (res && res.error && !isNetErr(res.error) && /machine inconnue|foreign key|23503/i.test(`${res.error.message} ${res.error.code}`)) {
+        const oldId = op.k === "ev" ? op.ev.id : op.id, nid = await findNewId(oldId);
+        if (nid) { retarget(oldId, nid); saveLocal(); continue; }   // la machine a changé de numéro : on renvoie la modif au bon endroit
+      }
       if (res && res.error) {
         if (isNetErr(res.error)) throw res.error;
         op.err = (op.err || 0) + 1; op.msg = res.error.message;
         if (op.err >= 4) { REJ.push(Q.shift()); saveLocal(); continue; } // mis de côté, pas effacé
         throw res.error;
       }
-      Q.shift();
+      Q.shift(); flushGen++;
       if (op.k === "f" && res.data && res.data.id) mergeRow(res.data);
       saveLocal();
     }
@@ -210,7 +248,7 @@ async function fetchAll(table, order, filter) {
 let refreshing = false;
 async function refresh() {
   if (refreshing || !supa || !USER) return false;
-  refreshing = true;
+  refreshing = true; const gen0 = flushGen;
   try {
     const [ms, es, hs] = await Promise.all([fetchAll("machines", "id"), fetchAll("equipes", "numero"),
       fetchAll("historique", "id", q => q.eq("champ", "evenement"))]);
@@ -219,6 +257,7 @@ async function refresh() {
     S.events = []; hs.forEach(h => { try { S.events.push(JSON.parse(h.nouveau)); } catch (e) {} });
     Q.forEach(applyOp);
     S.cacheAt = Date.now(); saveLocal();
+    if (flushGen !== gen0) setTimeout(() => refresh().then(ok => ok && softRender()), 300);
     return true;
   } catch (e) { console.warn("lecture serveur impossible", e); return false; }
   finally { refreshing = false; updateStatus(); }
@@ -431,7 +470,8 @@ function viewTout(q) {
 }
 
 /* ----- fiche machine ----- */
-let DRAFT = null;   // corrections en cours (pas encore enregistrées)
+let DRAFT = (() => { try { return JSON.parse(localStorage.getItem("asdj_draft") || "null"); } catch (e) { return null; } })();   // corrections en cours (gardées même si l'appli se ferme)
+const saveDraft = () => { try { DRAFT && Object.keys(DRAFT.v).length ? localStorage.setItem("asdj_draft", JSON.stringify(DRAFT)) : localStorage.removeItem("asdj_draft"); } catch (e) {} };
 const numSN = m => DRAFT && DRAFT.id === m.id && "_num" in DRAFT.v ? DRAFT.v._num === "__SN__" : noNum(m);
 const dv = (m, f) => DRAFT && DRAFT.id === m.id && f in DRAFT.v ? DRAFT.v[f] : m[f];
 const EVT = {
@@ -740,10 +780,17 @@ document.addEventListener("click", async e => {
   if (act === "statut" && id) return askStatut(id, t.dataset.v);
   if (act === "pret" && id) return askPret(id);
   if (act === "lieu" && id) { draftSet(id, "lieu", t.dataset.v); render(false); return; }
-  if (act === "draft-cancel") { DRAFT = null; render(false); return; }
+  if (act === "draft-cancel") {
+    openModal({ title: "Annuler les corrections ?", html: `<p class="mq">Les modifications non enregistrées de cette fiche seront perdues.</p>`, ok: "Oui, annuler", cancel: "Non, garder",
+      onOk: () => { DRAFT = null; saveDraft(); return true; } });
+    return;
+  }
   if (act === "draft-save" && id && DRAFT && DRAFT.id === id) {
     const m = S.machines[id], v = DRAFT.v, list = Object.keys(v).map(k => `<li>${esc(CHAMPS[k] || k)} : ${esc(histVal(k, m[k] == null ? "" : String(m[k])))} → <b>${esc(histVal(k, v[k] == null ? "" : String(v[k])))}</b></li>`).join("");
-    openModal({ title: `Enregistrer ${esc(id)} ?`, html: `<p class="mq">Tu vas modifier :</p><ul class="mlist">${list}</ul>`, ok: "💾 Oui, enregistrer",
+    const warn = [];
+    if ("_num" in v) warn.push(`Es-tu sûr de vouloir changer le numéro de <b>${esc(disp(m))}</b> en <b>${esc(v._num === "__SN__" ? "Sans numéro" : v._num)}</b> ?`);
+    if ("famille" in v) warn.push(`Es-tu sûr de vouloir déplacer cette machine de <b>${esc(FAM[m.famille] ? FAM[m.famille].nom : m.famille)}</b> vers <b>${esc(FAM[v.famille] ? FAM[v.famille].nom : v.famille)}</b> ?`);
+    openModal({ title: `Enregistrer ${esc(disp(m))} ?`, html: `${warn.map(w => `<div class="mwarn">⚠️ ${w}</div>`).join("")}<p class="mq">Tu vas modifier :</p><ul class="mlist">${list}</ul>`, ok: "💾 Oui, enregistrer",
       onOk: async () => {
         const ch = Object.assign({}, v); let target = id;
         if ("_num" in ch) {
@@ -760,7 +807,7 @@ document.addEventListener("click", async e => {
           target = data.id; saveLocal(); delete ch._num;
         }
         if ("equipe" in ch) ch.affectation = ch.equipe != null ? chef(ch.equipe) : "";
-        DRAFT = null;
+        DRAFT = null; saveDraft();
         if (Object.keys(ch).length) setFields(target, ch);
         if (target !== id) setTimeout(() => replaceTo(`#/machine/${encodeURIComponent(target)}`), 0);
         return true;
@@ -801,6 +848,7 @@ function draftSet(id, fld, v) {
   const base = fld === "_num" ? (noNum(m) ? "__SN__" : m.id) : (m[fld] ?? null);
   if (fld === "_num" && typeof v === "string" && v !== "__SN__") v = v.toUpperCase().replace(/\s+/g, "");
   if (base === (v ?? null)) delete DRAFT.v[fld]; else DRAFT.v[fld] = v;
+  saveDraft();
   const bar = $("#savebar"); if (bar) bar.classList.toggle("hidden", !Object.keys(DRAFT.v).length);
 }
 function fieldValue(el) {
@@ -880,7 +928,8 @@ async function sendPhotos() {
       if (error) throw error;
       rec.sent = true; await idbPut(p.key, rec);   // la copie locale reste sur le téléphone
       PHOTOS_WAIT = PHOTOS_WAIT.filter(x => x.key !== p.key);
-      if (p.kind === "main" && S.machines[p.id] && (latestLocal[p.id] === p.key || !S.machines[p.id].photo)) setFields(p.id, { photo: p.key });
+      const pid = resolveId(p.id);
+      if (p.kind === "main" && S.machines[pid] && (latestLocal[pid] === p.key || !S.machines[pid].photo)) setFields(pid, { photo: p.key });
     }
   } catch (e) { console.warn("photo en attente", e); }
   finally { sendingPhotos = false; updateStatus(); showPhotos(); }
@@ -978,6 +1027,7 @@ async function start() {
   stack = [location.hash.slice(1) || "/"];
   $("#status").classList.remove("hidden"); updateStatus();
   await loadPhotoQueue(); sendPhotos();
+  if (REJ.length) { REJ.forEach(o => { o.err = 0; Q.push(o); }); REJ = []; saveLocal(); }
   const hasCache = Object.keys(S.machines).length > 0;
   if (hasCache) render(true);
   const lm = $("#loader-msg"); if (lm) lm.textContent = "Synchronisation en cours…";
