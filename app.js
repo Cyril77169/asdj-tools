@@ -1,7 +1,7 @@
 /* ASDJ - Tools : suivi du matériel par famille et par équipe.
    Données partagées entre les comptes connectés (Supabase), copie locale + file d'attente pour le hors ligne. */
 "use strict";
-const APP_V = 13;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
+const APP_V = 14;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
 const CFG = window.APP_CONFIG;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1262,7 +1262,7 @@ async function pushEtat() {
 function viewParametres() {
   const r = ROLE === "chef" ? "Chef" : "Équipier";
   return header("Paramètres", "Réglages de l'appli") + `<main>
-    <div class="sect"><h3>🔔 Notifications sur ce téléphone</h3><div id="push-box"><p class="muted">Chargement…</p></div></div>
+    ${isChef() ? `<div class="sect"><h3>🔔 Notifications sur ce téléphone</h3><div id="push-box"><p class="muted">Chargement…</p></div></div>` : ""}
     <div class="sect"><h3>👤 Mon compte</h3><p class="mq" style="margin:0"><b>${esc(myName() || "Sans prénom")}</b> · <span class="role ${ROLE === "chef" ? "chef" : "eq"}">${r}</span></p>
       <p class="muted" style="margin:4px 0 10px">${esc((USER && USER.email) || "")}</p><button class="btn light" data-act="logout">Se déconnecter</button></div>
     ${isChef() ? `<div class="sect"><h3>🛡️ Réglages des chefs</h3><p class="muted" style="margin:0 0 8px">Visible seulement par Cyril et Nico.</p>

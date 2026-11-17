@@ -91,7 +91,8 @@ async function main() {
   const { today, creneau } = creneauParis(new Date());
   if (!creneau && !TEST) { console.log("Pas l'heure d'un envoi (6 h 30 ou midi, heure de Paris)."); return; }
   const slotKey = `creneau|${creneau}|${today}`;
-  const abos = await sql("select endpoint, p256dh, auth from public.push_abonnements");
+  // seulement les téléphones des chefs (Cyril et Nico), accès non coupé
+  const abos = await sql("select a.endpoint, a.p256dh, a.auth from public.push_abonnements a join public.membres m on m.user_id = a.user_id where m.role = 'chef' and m.actif");
   if (!abos.length) { console.log("Aucun téléphone abonné."); return; }
   let items, msg;
   if (TEST) { items = []; msg = { title: "🔔 ASDJ - Tools", body: "Test : les notifications marchent sur ce téléphone.", url: "./#/vehicules" }; }
