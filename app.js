@@ -1,7 +1,7 @@
 /* ASDJ - Tools : suivi du matériel par famille et par équipe.
    Données partagées entre les comptes connectés (Supabase), copie locale + file d'attente pour le hors ligne. */
 "use strict";
-const APP_V = 8;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
+const APP_V = 9;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
 const CFG = window.APP_CONFIG;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -34,7 +34,40 @@ const ATTRIB = ["operationnelle", "controle"];
 /* état affiché : une machine sans équipe (et sans souci) est au Dépôt (bleu) ; avec une équipe, elle est Attribuée */
 const eff = m => URGENTS.includes(m.statut) ? m.statut : m.equipe == null ? "disponible" : (m.statut === "disponible" ? "operationnelle" : m.statut);
 const LIEUX = { depot: "Au dépôt", equipe: "Avec l'équipe", reparateur: "Chez le réparateur", pret: "Prêtée" };
-const PRIO = { probleme: 0, reparation: 1, hs: 2, disponible: 3, controle: 4, operationnelle: 5 };
+const PRIO = { probleme: 0, reparation: 1, hs: 2, disponible: 3, controle: 4, operationnelle: 5, revision: 3 };
+/* véhicules : mêmes fiches que les machines (famille « vehicule »), avec leurs propres états */
+const VSTATUTS = [
+  { id: "operationnelle", nom: "En circulation", q: "est en circulation" },
+  { id: "probleme", nom: "Problème", q: "a un problème" },
+  { id: "reparation", nom: "En réparation", q: "part en réparation" },
+  { id: "disponible", nom: "Au dépôt", q: "reste au dépôt" },
+  { id: "revision", nom: "Attente révision", q: "est en attente de révision" },
+  { id: "hs", nom: "HS", q: "est hors service" },
+];
+const VST = Object.fromEntries(VSTATUTS.map(s => [s.id, s]));
+const VPRIO = { probleme: 0, reparation: 1, revision: 2, hs: 3, disponible: 4, operationnelle: 5 };
+const PB_TYPES = ["Accrochage / carrosserie", "Pare-choc", "Rétroviseur", "Feu / éclairage", "Pneu", "Moteur / voyant", "Freins", "Autre"];
+const VTYPES = { utilitaire: "Utilitaire / camionnette", voiture: "Voiture" };
+const ECH = [
+  { k: "ct", nom: "Contrôle technique", le: "ct_le", mois: "ct_mois", f: "fait" },
+  { k: "pol", nom: "Contrôle pollution", le: "pol_le", mois: "pol_mois", f: "fait" },
+  { k: "rev", nom: "Révision / vidange", le: "rev_le", mois: "rev_mois", f: "faite" },
+];
+const DELAIS = { 6: "6 mois", 12: "1 an", 24: "2 ans" };
+function addMonths(iso, n) { const [y, mo, d] = String(iso).slice(0, 10).split("-").map(Number); const x = new Date(y, mo - 1 + n, d); if (x.getDate() !== d) x.setDate(0); return x; }
+const isoOf = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+/* échéances d'un véhicule : niveau ok / warn (2 semaines avant) / late (dépassé) / vide (date à remplir) */
+function echeances(m) {
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  return ECH.filter(e => +m[e.mois] > 0).map(e => {
+    const le = m[e.le]; if (!le) return Object.assign({}, e, { niveau: "vide" });
+    const due = addMonths(le, +m[e.mois]), jours = Math.round((due - now) / 864e5);
+    return Object.assign({}, e, { due: isoOf(due), jours, niveau: jours < 0 ? "late" : jours <= 14 ? "warn" : "ok" });
+  });
+}
+const echTxt = x => x.niveau === "vide" ? "date à remplir" : x.niveau === "late" ? `dépassé de ${-x.jours} j` : x.jours === 0 ? "aujourd'hui" : x.niveau === "warn" ? `dans ${x.jours} jour${x.jours > 1 ? "s" : ""}` : "à jour";
+function alertes() { const out = []; vehicules().forEach(m => echeances(m).forEach(x => { if (x.niveau === "warn" || x.niveau === "late") out.push(Object.assign({ m }, x)); })); return out.sort((a, b) => a.jours - b.jours); }
+const vprio = m => { const a = echeances(m); return (VPRIO[m.statut] ?? 9) * 10 + (a.some(x => x.niveau === "late") ? 0 : a.some(x => x.niveau === "warn") ? 1 : 5); };
 const sc = id => `var(--s-${id})`;
 const fc = id => `var(--f-${id})`;
 
@@ -92,7 +125,9 @@ const natural = (a, b) => a.localeCompare(b, "fr", { numeric: true });
 const norm = t => String(t ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 const prio = m => PRIO[eff(m)] ?? 9;
 const byAlert = (a, b) => prio(a) - prio(b) || natural(a.id, b.id);
-const actives = () => Object.values(S.machines).filter(m => m.actif !== false);
+const isVeh = m => !!m && typeof m === "object" && m.famille === "vehicule";
+const actives = () => Object.values(S.machines).filter(m => m.actif !== false && !isVeh(m));
+const vehicules = () => Object.values(S.machines).filter(m => isVeh(m) && m.actif !== false);
 const teamNums = () => Object.keys(S.equipes).map(Number).sort((a, b) => a - b);
 const myName = () => (USER && USER.user_metadata && USER.user_metadata.nom) || "";
 const NOMS = () => [...new Set(["Cyril", "Nico", myName(), ...Object.values(S.equipes).map(e => e.chef)].filter(Boolean))];
@@ -117,7 +152,7 @@ function whoHTML(uid, fallback) {
 const evAnnul = e => e && e._hid && S.annul[e._hid];
 const ANN = {};      // ligne annulée → { par, at } (vu dans les listes chargées)
 const HROWS = {};    // lignes d'historique affichées (pour le menu ⋯)
-const disp = m => noNum(m) ? "Sans n°" : (m.id || m);
+const disp = m => isVeh(m) ? (m.plaque || `${m.modele || "Véhicule"} (sans plaque)`) : noNum(m) ? "Sans n°" : (m.id || m);
 const statMatch = (m, sel) => !sel || (sel === "attribuee" ? ATTRIB.includes(eff(m)) : eff(m) === sel);
 function whereTxt(m) {
   if (m.statut === "reparation" || m.lieu === "reparateur") return `Chez ${m.reparateur || "le réparateur"}` + ((m.depose_le || m.depuis) ? ` · ${sinceTxt(m.depose_le || m.depuis)}` : "") + (m.depose_par ? ` · déposée par ${m.depose_par}` : "");
@@ -445,7 +480,7 @@ function viewHome() {
   }).join("");
   const teams = teamNums();
   return header("ASDJ - Tools", "Au service des jardins", { home: true, right: `<button class="iconbtn" data-act="logout" aria-label="Se déconnecter">${SVG.out}</button>` }) +
-    `<main><input class="search" id="home-search" type="search" placeholder="🔍 Code, modèle, chef, type de machine…" autocomplete="off">
+    `<main>${segHTML("m")}${alertBandHTML(false)}<input class="search" id="home-search" type="search" placeholder="🔍 Code, modèle, chef, type de machine…" autocomplete="off">
     ${summaryHTML(all, "#/tout?")}
     <div class="tiles">${tiles}</div>
     <a class="sechead" href="#/equipes"><span class="tb-ic">${SVG.team}</span><b>Les équipes</b><span class="sp"></span><small>Tout voir</small>${SVG.chev}</a>
@@ -541,6 +576,10 @@ const EVT = {
   hs: { nom: "Déclarée HS", c: "hs" },
   pret: { nom: "Prêtée", c: "controle" },
   rendu: { nom: "Rendue après prêt", c: "operationnelle" },
+  ct: { nom: "Contrôle technique fait", c: "operationnelle" },
+  pol: { nom: "Contrôle pollution fait", c: "operationnelle" },
+  rev: { nom: "Révision / vidange faite", c: "operationnelle" },
+  revision: { nom: "En attente de révision", c: "revision" },
 };
 function evLines(e) {
   const lines = [];
@@ -583,8 +622,10 @@ function eventsHTML(id) {
       const can = isChef() && e._hid && !an;
       const lines = [];
       if (e.equipe != null && e.type !== "retour") lines.push(`Équipe : ${teamLabel(e.equipe)}`);
+      if (e.probleme_type) lines.push(`Genre : ${e.probleme_type}`);
+      if (e.fait_le) lines.push(`Fait le ${frDate(e.fait_le)}${e.km ? ` à ${Number(e.km).toLocaleString("fr-FR")} km` : ""}`);
       if (e.motif) lines.push(`Pourquoi : ${e.motif}`);
-      if (e.reparateur) lines.push(`Réparateur : ${e.reparateur}`);
+      if (e.reparateur) lines.push(`${isVeh(S.machines[id]) ? "Garage" : "Réparateur"} : ${e.reparateur}`);
       if (e.pret_a) lines.push(`${e.type === "rendu" ? "Rendue par" : "Prêtée à"} ${e.pret_a}${e.pret_le && e.type === "pret" ? ` le ${frDate(e.pret_le)}` : ""}`);
       if (e.type === "rendu" && e.duree != null) lines.push(`Durée du prêt : ${e.duree} j`);
       if (e.depose_par) lines.push(`Déposée par ${e.depose_par}${e.depose_le ? ` le ${frDate(e.depose_le)}` : ""}`);
@@ -650,10 +691,14 @@ function viewMachine(id) {
   </main>
   <div class="savebar ${dirty ? "" : "hidden"}" id="savebar"><span>Modifications non enregistrées</span><button class="btn light" data-act="draft-cancel">Annuler</button><button class="btn" data-act="draft-save">💾 Enregistrer</button></div>`;
 }
-const CHAMPS = { creation: "Ajout", _num: "Numéro", numero: "Numéro", pret_a: "Prêtée à", pret_le: "Prêtée le", depose_par: "Déposée par", depose_le: "Déposée le", recupere_par: "Récupérée par", recupere_le: "Récupérée le", photo: "Photo", statut: "État", lieu: "Lieu", reparateur: "Réparateur", depuis: "Depuis", motif: "Pourquoi", equipe: "Équipe", controle: "Contrôle", modele: "Modèle", notes: "Notes", actif: "Dans le parc", affectation: "Affectation", famille: "Type" };
-function histVal(c, v) {
+const CHAMPS = { plaque: "Plaque", type_vehicule: "Type de véhicule", km: "Kilométrage", km_le: "Kilométrage relevé le", ct_le: "Contrôle technique fait le", ct_mois: "Délai du CT", pol_le: "Contrôle pollution fait le", pol_mois: "Délai pollution", rev_le: "Révision faite le", rev_km: "Km à la révision", rev_mois: "Délai révision", probleme_type: "Genre de problème", creation: "Ajout", _num: "Numéro", numero: "Numéro", pret_a: "Prêtée à", pret_le: "Prêtée le", depose_par: "Déposée par", depose_le: "Déposée le", recupere_par: "Récupérée par", recupere_le: "Récupérée le", photo: "Photo", statut: "État", lieu: "Lieu", reparateur: "Réparateur", depuis: "Depuis", motif: "Pourquoi", equipe: "Équipe", controle: "Contrôle", modele: "Modèle", notes: "Notes", actif: "Dans le parc", affectation: "Affectation", famille: "Type" };
+function histVal(c, v, veh) {
   if (v == null || v === "") return "—";
-  if (c === "statut") return ST[v] ? ST[v].nom : v;
+  if (c === "statut") return veh ? (VST[v] ? VST[v].nom : v) : ST[v] ? ST[v].nom : (VST[v] ? VST[v].nom : v);
+  if (["km_le", "ct_le", "pol_le", "rev_le"].includes(c)) return frDate(v);
+  if (["km", "rev_km"].includes(c)) return `${Number(v).toLocaleString("fr-FR")} km`;
+  if (["ct_mois", "pol_mois", "rev_mois"].includes(c)) return DELAIS[v] || `${v} mois`;
+  if (c === "type_vehicule") return VTYPES[v] || v;
   if (c === "lieu") return LIEUX[v] || v;
   if (c === "equipe") return teamLabel(+v);
   if (["depuis", "controle", "depose_le", "recupere_le", "pret_le"].includes(c)) return frDate(v);
@@ -668,8 +713,9 @@ function histTxt(h) {
   if (c === "creation") return "➕ a ajouté cette machine";
   if (c === "evenement") { let e = {}; try { e = JSON.parse(h.nouveau); } catch (x) {} const t = EVT[e.type]; return `🔧 a noté : ${esc(t ? t.nom : (e.type || "un événement"))}${e.motif ? ` « ${esc(e.motif)} »` : ""}`; }
   if (c === "annulation") return h.nouveau === "creation" ? "↩️ a annulé l'ajout de cette machine" : "↩️ a annulé une panne / un événement noté";
-  if (h.annule) return `↩️ a annulé une modif : ${esc(CHAMPS[c] || c)} remis à <b>${esc(histVal(c, h.nouveau))}</b>`;
-  return `${esc(CHAMPS[c] || c)} : ${esc(histVal(c, h.ancien))} → <b>${esc(histVal(c, h.nouveau))}</b>`;
+  const veh = isVeh(S.machines[h.machine_id]);
+  if (h.annule) return `↩️ a annulé une modif : ${esc(CHAMPS[c] || c)} remis à <b>${esc(histVal(c, h.nouveau, veh))}</b>`;
+  return `${esc(CHAMPS[c] || c)} : ${esc(histVal(c, h.ancien, veh))} → <b>${esc(histVal(c, h.nouveau, veh))}</b>`;
 }
 const canUndo = h => isChef() && !ANN[h.id] && !S.annul[h.id] && !h.annule && !["numero", "annulation"].includes(h.champ) && !!S.machines[h.machine_id];
 /* les lignes d'une même action (même personne, même machine, à moins de 2 min) sont regroupées */
@@ -687,7 +733,7 @@ function histLi(g, withM) {
   const h0 = g[0], m = S.machines[h0.machine_id];
   const ans = g.map(h => ANN[h.id] || S.annul[h.id]), an = ans.find(Boolean), all = ans.every(Boolean);
   const hids = g.filter(canUndo).map(h => h.id);
-  const ml = withM ? ` · <b>${esc(m ? disp(m) : h0.machine_id)}</b> ${esc(m ? `${FAM[m.famille] ? FAM[m.famille].un : ""} ${m.modele || ""}` : "")}` : "";
+  const ml = withM ? ` · <b>${esc(m ? disp(m) : h0.machine_id)}</b> ${esc(m ? (isVeh(m) ? `🚐 ${m.plaque ? m.modele || "" : ""}` : `${FAM[m.famille] ? FAM[m.famille].un : ""} ${m.modele || ""}`) : "")}` : "";
   const lines = g.map((h, i) => `<div class="${ans[i] ? "undone" : ""}">${histTxt(h)}</div>`).join("");
   return `<li class="hrow"><div class="tx"><div class="${all ? "undone" : ""}"><time>${dateHeure(h0.at)}${ml}</time>${whoHTML(h0.par)}</div>${lines}${an ? `<span class="tag">Annulé par ${esc(nomDe(an.par) || "un chef")} le ${dateHeure(an.at)}</span>` : ""}</div>${hids.length ? `<button class="dots" data-act="dots" data-kind="row" data-hid="${hids.join(",")}" aria-label="Options">⋯</button>` : ""}</li>`;
 }
@@ -709,12 +755,14 @@ const mname = id => { const m = S.machines[id]; return m ? disp(m) : id; };
 function undoTxt(h) {
   if (h.champ === "creation") return "la machine ajoutée sera rangée dans « Retirées »";
   if (h.champ === "evenement") { let e = {}; try { e = JSON.parse(h.nouveau); } catch (x) {} return `« ${esc(EVT[e.type] ? EVT[e.type].nom : "Événement")} » sera barré`; }
-  return `${esc(CHAMPS[h.champ] || h.champ)} : ${esc(histVal(h.champ, h.nouveau))} → <b>${esc(histVal(h.champ, h.ancien))}</b> (comme avant)`;
+  const veh = isVeh(S.machines[h.machine_id]);
+  return `${esc(CHAMPS[h.champ] || h.champ)} : ${esc(histVal(h.champ, h.nouveau, veh))} → <b>${esc(histVal(h.champ, h.ancien, veh))}</b> (comme avant)`;
 }
 function listeTxt(x) {
   if (x.c === "creation") return `<b>${esc(mname(x.m))}</b> → rangée dans « Retirées »`;
   if (x.c === "evenement") return `<b>${esc(mname(x.m))}</b> « ${esc(EVT[x.type] ? EVT[x.type].nom : "Événement")} » → barré`;
-  return `<b>${esc(mname(x.m))}</b> ${esc(CHAMPS[x.c] || x.c)} : ${esc(histVal(x.c, x.de))} → <b>${esc(histVal(x.c, x.vers))}</b>`;
+  const veh = isVeh(S.machines[x.m]);
+  return `<b>${esc(mname(x.m))}</b> ${esc(CHAMPS[x.c] || x.c)} : ${esc(histVal(x.c, x.de, veh))} → <b>${esc(histVal(x.c, x.vers, veh))}</b>`;
 }
 const gardeTxt = g => g.map(x => `<b>${esc(mname(x.m))}</b> (${esc(CHAMPS[x.c] || x.c)}${x.par ? ` : ${esc(x.par)} est passé derrière` : ""})`).join(", ");
 async function undoBlocked() {
@@ -867,6 +915,204 @@ function viewAjout(fid) {
     <button class="btn" data-act="save-add" data-fam="${f.id}">Ajouter la machine</button></div></main>`;
 }
 
+/* ---------- VÉHICULES ---------- */
+const VAN = `<svg viewBox="0 0 64 64" fill="currentColor"><path d="M6 20a5 5 0 0 1 5-5h25a3 3 0 0 1 3 3v6h8.5a4 4 0 0 1 3.1 1.5l7.6 9.5a4 4 0 0 1 .8 2.4V44a3 3 0 0 1-3 3h-3a8 8 0 0 0-16 0H24a8 8 0 0 0-16 0H9a3 3 0 0 1-3-3zm35 9v8h14l-6.4-8z" fill-rule="evenodd"/><path fill-rule="evenodd" d="M10 48a6 6 0 1 0 12 0a6 6 0 1 0-12 0zm3.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0zM40 48a6 6 0 1 0 12 0a6 6 0 1 0-12 0zm3.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0z"/></svg>`;
+ICONS.vehicule = VAN;
+const plaqueHTML = (m, big) => `<span class="plate ${big ? "big" : ""} ${m.plaque ? "" : "vide"}"><i>F</i><span>${esc(m.plaque || "plaque à compléter")}</span></span>`;
+const vsc = id => `var(--s-${id})`;
+function segHTML(on) {
+  const n = alertes().length;
+  return `<div class="seg"><button class="${on === "m" ? "on" : ""}" data-act="go-r" data-h="#/">🔧 Machines</button><button class="${on === "v" ? "on" : ""}" data-act="go-r" data-h="#/vehicules">🚐 Véhicules${n ? ` <span class="due late">${n}</span>` : ""}</button></div>`;
+}
+function alertBandHTML(detail) {
+  const a = alertes(); if (!a.length) return "";
+  const nv = new Set(a.map(x => x.m.id)).size;
+  const txt = a.slice(0, 2).map(x => `${x.k === "ct" ? "CT" : x.k === "pol" ? "pollution" : "révision"} de ${esc(disp(x.m))} ${x.niveau === "late" ? "dépassé" : `dans ${x.jours} j`}`).join(" · ");
+  return `<a class="alertband" href="#/vehicules"><span class="ab-ic">⚠️</span><div><b>${detail ? `${a.length} rendez-vous à prendre` : `${nv} véhicule${nv > 1 ? "s" : ""} : rendez-vous à prendre`}</b><br>${detail ? "Touche un véhicule pour voir le détail" : txt}${!detail && a.length > 2 ? "…" : ""}</div></a>`;
+}
+function vcardHTML(m) {
+  const ech = echeances(m), st = VST[m.statut] ? m.statut : "operationnelle", court = x => x.k === "ct" ? "CT" : x.k === "pol" ? "pollution" : "révision";
+  const bad = ech.filter(x => x.niveau === "warn" || x.niveau === "late"), vide = ech.filter(x => x.niveau === "vide");
+  const dues = bad.map(x => `<span class="due ${x.niveau}">${court(x).replace(/^./, c => c.toUpperCase())} : ${esc(echTxt(x))}</span>`).join("")
+    + (vide.length ? `<span class="due vide">📅 À remplir : ${vide.map(court).join(", ")}</span>` : "")
+    || `<span class="due ok">Tout est à jour</span>`;
+  return `<a class="vcard ${m.actif === false ? "off" : ""}" href="#/machine/${encodeURIComponent(m.id)}" style="--c:${vsc(st)}"><span class="vi">${VAN}</span>
+    <span class="vt">${plaqueHTML(m)}<small><b>${esc(m.modele || "")}</b> · ${esc(teamLabel(m.equipe))}</small><span class="dues">${dues}</span></span><span class="pill">${esc(VST[st].nom)}</span></a>`;
+}
+function viewVehicules() {
+  const all = vehicules().sort((a, b) => vprio(a) - vprio(b) || natural(a.modele || "", b.modele || ""));
+  const off = Object.values(S.machines).filter(m => isVeh(m) && m.actif === false);
+  const c = {}; VSTATUTS.forEach(s => c[s.id] = 0); all.forEach(m => c[VST[m.statut] ? m.statut : "operationnelle"]++);
+  const cell = (id, big) => `<div class="sum ${big ? "big" : ""} ${c[id] ? "" : "zero"}" style="--c:${vsc(id)}"><b>${c[id]}</b><span>${esc(VST[id].nom)}</span></div>`;
+  return header("ASDJ - Tools", "Au service des jardins", { home: true, right: `<button class="iconbtn" data-act="logout" aria-label="Se déconnecter">${SVG.out}</button>` }) + `<main>
+    ${segHTML("v")}${alertBandHTML(true)}
+    <div class="summary vsumm"><div class="sumrow two">${cell("probleme", 1)}${cell("reparation", 1)}</div>
+    <div class="sumrow three">${cell("operationnelle")}${cell("disponible")}${cell("revision")}</div>${c.hs ? `<div class="sumrow">${cell("hs")}</div>` : ""}</div>
+    <div class="vlist">${all.map(vcardHTML).join("") || `<div class="empty">Aucun véhicule.</div>`}</div>
+    <div class="addbar"><button class="btn light" data-act="add" data-fam="vehicule">+ Ajouter un véhicule</button></div>
+    ${off.length ? `<details class="sect"><summary><h3 style="display:inline">Véhicules retirés (${off.length})</h3></summary><div class="vlist">${off.map(vcardHTML).join("")}</div></details>` : ""}
+    </main>`;
+}
+function viewVehicule(m) {
+  const id = m.id, st = VST[m.statut] ? m.statut : "operationnelle", eq = dv(m, "equipe");
+  const teamOpts = `<option value="">Dépôt</option>` + teamNums().map(n => `<option value="${n}" ${eq === n ? "selected" : ""}>${esc(teamLabel(n))}</option>`).join("");
+  const inp = (fld, label, type = "text", ph = "", list = "", dis = false) => `<label class="f" for="f-${fld}">${label}</label><input class="inp" id="f-${fld}" ${type !== "text" ? `type="${type}"` : ""} ${type === "number" ? `inputmode="numeric" min="0"` : ""} ${list ? `list="${list}"` : ""} data-field="${fld}" value="${esc(dv(m, fld) ?? "")}" placeholder="${esc(ph)}" ${dis ? "disabled" : ""}>`;
+  const sel = (fld, label, opts) => `<label class="f" for="f-${fld}">${label}</label><select class="inp" id="f-${fld}" data-field="${fld}" ${isChef() ? "" : "disabled"}>${opts.map(([v, t]) => `<option value="${v}" ${String(dv(m, fld) ?? "") === String(v) ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>`;
+  const dirty = DRAFT && DRAFT.id === id && Object.keys(DRAFT.v).length;
+  const otherDraft = DRAFT && DRAFT.id !== id && Object.keys(DRAFT.v).length && S.machines[DRAFT.id];
+  const ech = echeances(m);
+  const echRow = x => `<div class="echrow ${x.niveau === "ok" ? "" : x.niveau}"><h4>${esc(x.nom)} <span class="due ${x.niveau}">${esc(echTxt(x))}</span></h4>
+      ${x.niveau === "vide" ? `<p>Pas encore de date : indique quand ${x.k === "rev" ? "la dernière a été faite" : "le dernier a été fait"}.</p>` : `<p>${x.k === "rev" ? "Faite" : "Fait"} le ${frDate(m[x.le])}${x.k === "rev" && m.rev_km ? ` à ${Number(m.rev_km).toLocaleString("fr-FR")} km` : ""} · tous les <b>${esc(DELAIS[m[x.mois]] || `${m[x.mois]} mois`)}</b></p><p>${x.k === "rev" ? "Prochaine" : "Prochain"} avant le <b>${frDate(x.due)}</b></p>`}
+      <div class="row2"><button class="btn light" data-act="ech" data-k="${x.k}" data-d="auj">✅ ${x.k === "rev" ? "Faite" : "Fait"} aujourd'hui</button><button class="btn light" data-act="ech" data-k="${x.k}" data-d="autre">📅 Autre date</button></div></div>`;
+  return header(disp(m), m.plaque ? m.modele : "Véhicule", { fam: "vehicule" }) + `<main>
+    ${otherDraft ? `<a class="draftwarn" href="#/machine/${encodeURIComponent(DRAFT.id)}">⚠️ Corrections non enregistrées sur <b>${esc(disp(otherDraft))}</b> : touche ici pour les valider.</a>` : ""}
+    <div class="hero" style="--c:${vsc(st)}"><span class="fam">${VAN}</span>
+      <div class="id">${plaqueHTML(m, true)}</div><div class="mod" style="margin-top:8px">${esc(m.modele || "")}${m.type_vehicule ? ` · ${esc(VTYPES[m.type_vehicule] || m.type_vehicule)}` : ""}</div>
+      <div class="st">${esc(VST[st].nom)}</div><div class="since">${esc(m.lieu === "reparateur" ? `Au garage${m.reparateur ? ` : ${m.reparateur}` : ""}` : teamLabel(m.equipe))}${m.depuis ? ` · ${esc(sinceTxt(m.depuis))}` : ""}</div>
+      ${m.motif && ["probleme", "reparation", "hs", "revision"].includes(st) ? `<div class="since">${m.probleme_type && st === "probleme" ? `${esc(m.probleme_type)} : ` : ""}« ${esc(m.motif)} »</div>` : ""}</div>
+
+    <div class="sect"><h3>Échéances</h3><div class="ech">${ech.map(echRow).join("") || `<p class="muted">Aucune échéance suivie.</p>`}</div></div>
+
+    <div class="sect"><h3>Kilométrage</h3>${m.km != null && m.km !== "" ? `<span class="km">${Number(m.km).toLocaleString("fr-FR")} km</span> <span class="muted">${m.km_le ? `relevé le ${frDate(m.km_le)}` : ""}</span>` : `<p class="muted" style="margin:0">Pas encore relevé.</p>`}
+      <div style="height:8px"></div><button class="btn light" data-act="km">Mettre à jour le kilométrage</button></div>
+
+    <div class="sect"><h3>Changer l'état</h3><div class="stgrid">
+      ${VSTATUTS.map(s => `<button class="stbtn ${st === s.id ? "on" : ""}" style="--c:${vsc(s.id)}" data-act="statut" data-v="${s.id}">${esc(s.nom)}</button>`).join("")}
+    </div><div class="stfoot"><span class="muted">Une confirmation est demandée à chaque changement.</span></div></div>
+
+    <div class="sect"><h3>Photo</h3><div class="photo" id="photo-box" data-main="${esc(id)}">${m.photo || pendingPhoto(m.id, "main") ? "Chargement de la photo…" : "Pas encore de photo"}</div>
+      <div class="pickrow"><label class="btn light">📷 Prendre une photo<input type="file" accept="image/*" capture="environment" id="photo-cam" hidden></label>
+      <label class="btn light">🖼️ Galerie<input type="file" accept="image/*" id="photo-input" hidden></label></div></div>
+
+    <div class="sect"><h3>Historique : problèmes, réparations, contrôles</h3>${eventsHTML(id)}</div>
+
+    <div class="sect ${dirty ? "dirty" : ""}"><h3>Infos du véhicule</h3><p class="muted" style="margin:0 0 4px">Pour corriger une erreur de saisie. Rien n'est changé tant que tu n'as pas appuyé sur « Enregistrer ».</p>
+      ${isChef() ? "" : `<div class="lock">🔒 Plaque, type et délais : réservé à Cyril et Nico</div>`}
+      ${inp("plaque", "Plaque d'immatriculation", "text", "AB-123-CD", "", !isChef())}
+      ${inp("modele", "Modèle")}
+      ${sel("type_vehicule", "Type de véhicule", [["utilitaire", VTYPES.utilitaire], ["voiture", VTYPES.voiture]])}
+      <label class="f" for="f-equipe">Équipe</label><select class="inp" id="f-equipe" data-field="equipe">${teamOpts}</select>
+      <div class="two"><div>${sel("ct_mois", "CT tous les", [["24", "2 ans"], ["12", "1 an"]])}</div><div>${sel("pol_mois", "Pollution tous les", [["", "Non concerné"], ["12", "1 an"]])}</div></div>
+      ${sel("rev_mois", "Révision tous les", [["12", "1 an"], ["6", "6 mois"], ["24", "2 ans"]])}
+      ${inp("reparateur", "Garage", "text", "Nom du garage")}
+      <div class="two"><div>${inp("depose_par", "Déposé par", "text", "Nom", "noms")}</div><div>${inp("depose_le", "Déposé le", "date")}</div></div>
+      <div class="two"><div>${inp("recupere_par", "Récupéré par", "text", "Nom", "noms")}</div><div>${inp("recupere_le", "Récupéré le", "date")}</div></div>
+      ${inp("depuis", "Dans cet état depuis le", "date")}
+      <label class="f" for="f-motif">Problème / raison</label><textarea class="inp" id="f-motif" data-field="motif">${esc(dv(m, "motif"))}</textarea>
+      <label class="f" for="f-notes">Notes</label><textarea class="inp" id="f-notes" data-field="notes">${esc(dv(m, "notes"))}</textarea>
+      <datalist id="noms">${NOMS().map(n => `<option value="${esc(n)}">`).join("")}</datalist>
+    </div>
+
+    <details class="sect journal" ${JOPEN ? "open" : ""}><summary><h3 style="display:inline">Journal de toutes les modifications</h3></summary><ul class="hist" id="hist" data-id="${esc(id)}">${HISTC[id] || "<li>Chargement…</li>"}</ul></details>
+
+    ${isChef() ? `<button class="btn ${m.actif === false ? "light" : "danger"}" data-act="actif">${m.actif === false ? "Remettre dans le parc" : "Retirer du parc (vendu, détruit…)"}</button>`
+      : `<button class="btn dis" disabled>🔒 ${m.actif === false ? "Remettre dans le parc" : "Retirer du parc"} : réservé à Cyril et Nico</button>`}
+  </main>
+  <div class="savebar ${dirty ? "" : "hidden"}" id="savebar"><span>Modifications non enregistrées</span><button class="btn light" data-act="draft-cancel">Annuler</button><button class="btn" data-act="draft-save">💾 Enregistrer</button></div>`;
+}
+function viewAjoutV() {
+  const teamOpts = `<option value="">Dépôt</option>` + teamNums().map(n => `<option value="${n}">${esc(teamLabel(n))}</option>`).join("");
+  return header("Ajouter un véhicule", "Nouveau véhicule", { fam: "vehicule" }) + `<main><div class="sect">
+    <label class="f" for="a-plaque" style="margin-top:0">Plaque (ex. : AB-123-CD) <span class="muted">— peut rester vide</span></label><input class="inp" id="a-plaque" autocapitalize="characters" autocomplete="off">
+    <label class="f" for="a-mod">Modèle (ex. : Renault Master)</label><input class="inp" id="a-mod" autocomplete="off">
+    <label class="f" for="a-type">Type</label><select class="inp" id="a-type"><option value="utilitaire">${VTYPES.utilitaire}</option><option value="voiture">${VTYPES.voiture}</option></select>
+    <label class="f" for="a-eq">Équipe</label><select class="inp" id="a-eq">${teamOpts}</select>
+    <div id="a-msg"></div><div style="height:14px"></div>
+    <button class="btn" data-act="save-add-v">Ajouter le véhicule</button></div></main>`;
+}
+const fmtPlaque = v => { const x = String(v || "").toUpperCase().replace(/[^A-Z0-9]/g, ""); return /^[A-Z]{2}\d{3}[A-Z]{2}$/.test(x) ? `${x.slice(0, 2)}-${x.slice(2, 5)}-${x.slice(5)}` : String(v || "").toUpperCase().trim(); };
+function nextVeh() { const max = Math.max(0, ...Object.keys(S.machines).map(k => (k.match(/^VH(\d+)$/) || [])[1]).filter(Boolean).map(Number)); return "VH" + String(max + 1).padStart(2, "0"); }
+
+/* changer l'état d'un véhicule */
+function askStatutV(id, v) {
+  const m = S.machines[id], s = VST[v], cur = m.statut;
+  if (v === cur) return;
+  const leavingRep = cur === "reparation" && v !== "reparation";
+  const nomsList = `<datalist id="m-noms">${NOMS().map(n => `<option value="${esc(n)}">`).join("")}</datalist>`;
+  let html = `<p class="mq">Es-tu sûr que <b>${esc(disp(m))}</b> (${esc(m.modele)}) <b style="color:${vsc(v)}">${esc(s.q)}</b> ?</p>`;
+  if (v === "probleme") html += `<label class="f">Genre de problème</label><div class="chips2" id="m-pbt">${PB_TYPES.map(t => `<button type="button" data-act="pbt" data-v="${esc(t)}">${esc(t)}</button>`).join("")}</div>
+    <label class="f" for="m-motif">Ce qui s'est passé</label><textarea class="inp" id="m-motif" placeholder="Ex. : accroché un poteau en marche arrière…"></textarea>${photoField("Photo du problème")}`;
+  if (v === "hs" || v === "revision") html += `<label class="f" for="m-motif">${v === "hs" ? "Pourquoi ?" : "Précision (facultatif)"}</label><textarea class="inp" id="m-motif">${esc(v === "hs" ? m.motif : "")}</textarea>`;
+  if (v === "reparation") html += `<label class="f" for="m-rep">Quel garage ?</label><input class="inp" id="m-rep" value="${esc(m.reparateur)}" placeholder="Nom du garage">
+    <div class="two"><div><label class="f" for="m-dpar">Déposé par</label><input class="inp" id="m-dpar" list="m-noms" value="${esc(myName())}"></div><div><label class="f" for="m-dle">Le</label><input class="inp" id="m-dle" type="date" value="${today()}"></div></div>
+    <label class="f" for="m-motif">Pour quoi ?</label><textarea class="inp" id="m-motif">${esc(m.motif)}</textarea>${photoField("Photo")}${nomsList}`;
+  if (leavingRep) html += `<div class="mnote">Il revient du garage ${esc(m.reparateur || "")}.</div><div class="two"><div><label class="f" for="m-rpar">Récupéré par</label><input class="inp" id="m-rpar" list="m-noms" value="${esc(myName())}"></div><div><label class="f" for="m-rle">Le</label><input class="inp" id="m-rle" type="date" value="${today()}"></div></div>${nomsList}`;
+  openModal({
+    title: `${esc(disp(m))} : ${esc(s.nom)}`, html, ok: `Oui, confirmer`, okColor: vsc(v),
+    onOk: async () => {
+      const ch = { statut: v, depuis: today() }, ev = {};
+      if (v === "probleme") {
+        const t = (MODAL.el.querySelector("#m-pbt .on") || {}).dataset; const motif = mval("m-motif");
+        if (!t && !motif) { $("#m-msg").innerHTML = `<div class="msg err">Choisis le genre de problème ou décris-le.</div>`; return false; }
+        ch.probleme_type = t ? t.v : ""; ch.motif = motif; Object.assign(ev, { probleme_type: ch.probleme_type, motif });
+      }
+      if (v === "hs" || v === "revision") { ch.motif = mval("m-motif"); if (ch.motif) ev.motif = ch.motif; }
+      if (v === "reparation") {
+        Object.assign(ch, { lieu: "reparateur", reparateur: mval("m-rep"), depose_par: mval("m-dpar"), depose_le: mval("m-dle") || today(), recupere_par: "", recupere_le: null, motif: mval("m-motif") });
+        Object.assign(ev, { reparateur: ch.reparateur, depose_par: ch.depose_par, depose_le: ch.depose_le, motif: ch.motif });
+      } else if (m.lieu === "reparateur" || v === "disponible") ch.lieu = v === "disponible" ? "depot" : (m.equipe != null ? "equipe" : "depot");
+      if (v === "operationnelle") { ch.motif = ""; ch.probleme_type = ""; }
+      let retour = null;
+      if (leavingRep) { ch.recupere_par = mval("m-rpar"); ch.recupere_le = mval("m-rle") || today(); retour = { reparateur: m.reparateur, recupere_par: ch.recupere_par, recupere_le: ch.recupere_le, duree: m.depose_le ? Math.max(0, Math.round((Date.parse(ch.recupere_le) - Date.parse(m.depose_le)) / 864e5)) : null }; }
+      const file = MODAL && MODAL.el.__file;
+      if (file) { try { ev.photo = await addPhoto(id, file, "ev"); } catch (e) {} }
+      if (retour) addEvent(id, "retour", retour);
+      if (["probleme", "reparation", "hs", "revision"].includes(v)) addEvent(id, v, ev);
+      setFields(id, ch);
+      return true;
+    },
+    onOpen: d => { d.querySelectorAll(".m-photo").forEach(i => i.addEventListener("change", () => { if (i.files[0]) { d.__file = i.files[0]; $("#m-photo-lbl").textContent = "✅ Photo ajoutée"; } })); },
+  });
+}
+/* une échéance a été faite (CT, pollution, révision) */
+function askEch(id, k, quand) {
+  const m = S.machines[id], e = ECH.find(x => x.k === k); if (!m || !e) return;
+  openModal({ title: `${esc(e.nom)} ${e.f} ?`, center: true, ok: "Oui, enregistrer",
+    html: `<p class="mq">Es-tu sûr que ${k === "rev" ? "la révision / vidange" : `le ${e.nom.toLowerCase()}`} de <b>${esc(disp(m))}</b> a été ${e.f} ?</p>
+      <label class="f" for="m-ed">Date</label><input class="inp" id="m-ed" type="date" value="${quand === "auj" ? today() : (m[e.le] || today())}" max="${today()}">
+      <label class="f" for="m-ekm">Kilométrage <span class="muted">(facultatif)</span></label><input class="inp" id="m-ekm" type="number" inputmode="numeric" min="0" placeholder="${m.km ? `dernier relevé : ${Number(m.km).toLocaleString("fr-FR")}` : "ex. 156500"}">
+      <p class="muted" id="m-enext"></p>`,
+    onOpen: d => { const upd = () => { const x = d.querySelector("#m-ed").value; d.querySelector("#m-enext").textContent = x && +m[e.mois] ? `Prochain rappel : 2 semaines avant le ${frDate(isoOf(addMonths(x, +m[e.mois])))}.` : ""; }; d.querySelector("#m-ed").addEventListener("input", upd); upd(); if (quand !== "auj") setTimeout(() => d.querySelector("#m-ed").focus(), 50); },
+    onOk: () => {
+      const d = mval("m-ed"), km = mval("m-ekm");
+      if (!d) { $("#m-msg").innerHTML = `<div class="msg err">Indique la date.</div>`; return false; }
+      if (d > today()) { $("#m-msg").innerHTML = `<div class="msg err">La date ne peut pas être dans le futur.</div>`; return false; }
+      if (km && !/^\d+$/.test(km)) { $("#m-msg").innerHTML = `<div class="msg err">Le kilométrage doit être un nombre.</div>`; return false; }
+      const ch = { [e.le]: d };
+      if (km) { if (k === "rev") ch.rev_km = +km; if (!m.km_le || d >= m.km_le) { ch.km = +km; ch.km_le = d; } }
+      if (k === "rev" && m.statut === "revision") { ch.statut = "operationnelle"; ch.depuis = today(); ch.motif = ""; }
+      addEvent(id, k, { fait_le: d, km: km ? +km : null });
+      setFields(id, ch); return true;
+    } });
+}
+function askKm(id) {
+  const m = S.machines[id];
+  openModal({ title: "Kilométrage", center: true, ok: "Oui, enregistrer",
+    html: `<p class="mq">Nouveau kilométrage de <b>${esc(disp(m))}</b> :</p><input class="inp" id="m-km" type="number" inputmode="numeric" min="0" placeholder="${m.km ? Number(m.km).toLocaleString("fr-FR") : "ex. 156500"}">
+      <p class="muted">${m.km ? `Dernier relevé : ${Number(m.km).toLocaleString("fr-FR")} km${m.km_le ? ` le ${frDate(m.km_le)}` : ""}.` : ""}</p>`,
+    onOpen: d => setTimeout(() => d.querySelector("#m-km").focus(), 50),
+    onOk: () => {
+      const v = mval("m-km");
+      if (!/^\d+$/.test(v)) { $("#m-msg").innerHTML = `<div class="msg err">Écris le kilométrage en chiffres.</div>`; return false; }
+      if (m.km && +v < +m.km && !MODAL.el.__okBas) { MODAL.el.__okBas = true; $("#m-msg").innerHTML = `<div class="msg err">C'est moins que le dernier relevé (${Number(m.km).toLocaleString("fr-FR")} km). Si c'est bien ça (erreur à corriger), appuie encore une fois sur « Oui, enregistrer ».</div>`; return false; }
+      setFields(id, { km: +v, km_le: today() }); return true;
+    } });
+}
+/* pop-up des rendez-vous à prendre : à l'ouverture, puis tous les 2 jours tant que ce n'est pas fait */
+function maybeAlertPopup() {
+  if (!USER || MODAL || ROLE === "coupe") return;
+  const a = alertes(); if (!a.length) return;
+  const key = `asdj_alertes_${USER.id}`; let vu = {}; try { vu = JSON.parse(localStorage.getItem(key) || "{}"); } catch (e) {}
+  const now = Date.now(), sig = x => `${x.m.id}|${x.k}|${x.due}`;
+  if (!a.some(x => !vu[sig(x)] || now - vu[sig(x)] > 48 * 3600e3)) return;
+  const nv = {}; a.forEach(x => nv[sig(x)] = now); try { localStorage.setItem(key, JSON.stringify(nv)); } catch (e) {}
+  openModal({ title: "⚠️ Rendez-vous à prendre", center: true, cancel: null, ok: "Compris",
+    html: a.slice(0, 6).map(x => `<a class="echrow ${x.niveau}" href="#/machine/${encodeURIComponent(x.m.id)}" data-act="m-cancel" style="display:block;margin-bottom:8px;color:inherit;text-decoration:none"><h4>${esc(x.nom)} <span class="due ${x.niveau}">${esc(echTxt(x))}</span></h4>
+      <p>${plaqueHTML(x.m)} ${esc(x.m.modele || "")}</p><p>${x.k === "rev" ? "Faite" : "Fait"} le ${frDate(x.m[x.le])} · à refaire avant le <b>${frDate(x.due)}</b></p></a>`).join("")
+      + (a.length > 6 ? `<p class="muted">… et ${a.length - 6} autre${a.length - 6 > 1 ? "s" : ""}.</p>` : "")
+      + `<p class="muted" style="margin-top:6px">Ce rappel revient tous les 2 jours tant que la date n'est pas mise à jour.</p>` });
+}
+
 /* rendu principal (garde la position de défilement de chaque écran) */
 let pendingRender = false, focusSearch = false;
 function render(nav) {
@@ -881,8 +1127,9 @@ function render(nav) {
   else if (a === "equipes") html = viewEquipes();
   else if (a === "equipe") html = viewEquipe(b, r.q);
   else if (a === "tout") html = viewTout(r.q);
-  else if (a === "machine") html = viewMachine(b);
-  else if (a === "ajouter") html = viewAjout(b);
+  else if (a === "machine") html = isVeh(S.machines[b]) ? viewVehicule(S.machines[b]) : viewMachine(b);
+  else if (a === "vehicules") html = viewVehicules();
+  else if (a === "ajouter") html = b === "vehicule" ? viewAjoutV() : viewAjout(b);
   else if (a === "activite") html = viewActivite();
   else if (a === "acces") html = viewAcces();
   else html = viewHome();
@@ -1003,6 +1250,8 @@ document.addEventListener("click", async e => {
   if (act === "undo-all") { closePops(); if (isChef()) askUndoAll(); return; }
   if (act === "acc") { closePops(); if (isChef()) askAcces(t.dataset.uid, t.dataset.a); return; }
   if (act === "go") return go(t.dataset.h);
+  if (act === "go-r") return replaceTo(t.dataset.h);
+  if (act === "pbt") { t.parentNode.querySelectorAll("button").forEach(b => b.classList.toggle("on", b === t)); const mm = $("#m-msg"); if (mm) mm.innerHTML = ""; return; }
   if (act === "act-f") { replaceTo(t.dataset.h); return; }
   if (act === "act-more") { t.disabled = true; t.textContent = "Chargement…"; loadActivite(false); return; }
   if (act === "act-date") {
@@ -1057,7 +1306,9 @@ document.addEventListener("click", async e => {
     const mm = $("#m-msg"); if (mm) mm.innerHTML = "";
     return;
   }
-  if (act === "statut" && id) return askStatut(id, t.dataset.v);
+  if (act === "statut" && id) return isVeh(S.machines[id]) ? askStatutV(id, t.dataset.v) : askStatut(id, t.dataset.v);
+  if (act === "ech" && id) return askEch(id, t.dataset.k, t.dataset.d);
+  if (act === "km" && id) return askKm(id);
   if (act === "pret" && id) return askPret(id);
   if (act === "lieu" && id) { draftSet(id, "lieu", t.dataset.v); render(false); return; }
   if (act === "draft-cancel") {
@@ -1069,6 +1320,7 @@ document.addEventListener("click", async e => {
     const m = S.machines[id], v = DRAFT.v, list = Object.keys(v).map(k => `<li>${esc(CHAMPS[k] || k)} : ${esc(histVal(k, m[k] == null ? "" : String(m[k])))} → <b>${esc(histVal(k, v[k] == null ? "" : String(v[k])))}</b></li>`).join("");
     const warn = [];
     if ("_num" in v) warn.push(`Es-tu sûr de vouloir changer le numéro de <b>${esc(disp(m))}</b> en <b>${esc(v._num === "__SN__" ? "Sans numéro" : v._num)}</b> ?`);
+    if ("plaque" in v) warn.push(`Es-tu sûr de vouloir changer la plaque <b>${esc(m.plaque || "(vide)")}</b> en <b>${esc(v.plaque || "(vide)")}</b> ?`);
     if ("famille" in v) warn.push(`Es-tu sûr de vouloir déplacer cette machine de <b>${esc(FAM[m.famille] ? FAM[m.famille].nom : m.famille)}</b> vers <b>${esc(FAM[v.famille] ? FAM[v.famille].nom : v.famille)}</b> ?`);
     openModal({ title: `Enregistrer ${esc(disp(m))} ?`, html: `${warn.map(w => `<div class="mwarn">⚠️ ${w}</div>`).join("")}<p class="mq">Tu vas modifier :</p><ul class="mlist">${list}</ul>`, ok: "💾 Oui, enregistrer",
       onOk: async () => {
@@ -1103,6 +1355,15 @@ document.addEventListener("click", async e => {
       onOk: () => { setFields(id, off ? { actif: false, statut: "hs", depuis: today() } : { actif: true, statut: "disponible", lieu: "depot", equipe: null, depuis: today() }); return true; },
     });
     return;
+  }
+  if (act === "save-add-v") {
+    const plaque = fmtPlaque($("#a-plaque").value), mod = $("#a-mod").value.trim(), type = $("#a-type").value, eqv = $("#a-eq").value, msg = $("#a-msg");
+    if (!mod) { msg.innerHTML = `<div class="msg err">Indique le modèle (ex. : Renault Master).</div>`; return; }
+    if (plaque && Object.values(S.machines).some(x => isVeh(x) && x.plaque === plaque)) { msg.innerHTML = `<div class="msg err">La plaque ${esc(plaque)} existe déjà.</div>`; return; }
+    const eq = eqv === "" ? null : +eqv, nid = nextVeh();
+    addMachine({ id: nid, famille: "vehicule", modele: mod, plaque, type_vehicule: type, equipe: eq, affectation: eq != null ? chef(eq) : "", statut: "operationnelle", lieu: eq != null ? "equipe" : "depot",
+      ct_mois: 24, pol_mois: type === "utilitaire" ? 12 : null, rev_mois: 12, depuis: today(), actif: true, ordre: 1000 });
+    replaceTo(`#/machine/${encodeURIComponent(nid)}`); return;
   }
   if (act === "save-add") {
     let num = $("#a-num").value.trim().toUpperCase().replace(/\s+/g, ""); const mod = $("#a-mod").value.trim(), eqv = $("#a-eq").value;
@@ -1147,7 +1408,9 @@ function draftSet(id, fld, v) {
 function fieldValue(el) {
   const fld = el.dataset.field; let v = el.value;
   if (fld === "equipe") return v === "" ? null : +v;
-  if (["depuis", "controle", "depose_le", "recupere_le", "pret_le"].includes(fld)) return v || null;
+  if (["depuis", "controle", "depose_le", "recupere_le", "pret_le", "km_le", "ct_le", "pol_le", "rev_le"].includes(fld)) return v || null;
+  if (["km", "rev_km", "ct_mois", "pol_mois", "rev_mois"].includes(fld)) return v === "" ? null : +v;
+  if (fld === "plaque") return fmtPlaque(v);
   return v.trim();
 }
 document.addEventListener("input", e => {
@@ -1333,7 +1596,7 @@ async function start() {
   const ok = await refresh();
   clearTimeout(timer);
   if (!ok && !hasCache) { const l2 = $("#loader-msg"); if (l2) l2.textContent = "Pas de réseau. Réessaie quand tu as internet."; setTimeout(() => location.reload(), 15000); return; }
-  render(true); hideLoader(); checkRobot();
+  render(true); hideLoader(); checkRobot(); setTimeout(maybeAlertPopup, 900);
   // temps réel : les modifs de l'autre téléphone arrivent tout de suite
   try {
     channel = supa.channel("asdj")
@@ -1351,7 +1614,7 @@ window.addEventListener("online", () => { updateStatus(); if (!started) return; 
 window.addEventListener("offline", () => updateStatus());
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible" || !USER || !started) return;
-  checkVersion().then(upd => { if (upd) return; checkRobot(); sendPhotos(); flush().then(() => refresh()).then(ok => ok && softRender()); });
+  checkVersion().then(upd => { if (upd) return; checkRobot(); sendPhotos(); flush().then(() => refresh()).then(ok => { if (ok) softRender(); setTimeout(maybeAlertPopup, 600); }); });
 });
 
 (async function init() {
