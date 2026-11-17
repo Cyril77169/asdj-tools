@@ -1,7 +1,7 @@
 /* ASDJ - Tools : suivi du matériel par famille et par équipe.
    Données partagées entre les comptes connectés (Supabase), copie locale + file d'attente pour le hors ligne. */
 "use strict";
-const APP_V = 15;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
+const APP_V = 16;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
 const CFG = window.APP_CONFIG;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -508,7 +508,7 @@ function header(title, sub, opts = {}) {
   const left = opts.home
     ? `<img class="logo" src="icons/icon-192.png" alt="">`
     : `<button class="iconbtn" data-act="back" aria-label="Retour">${SVG.back}</button>`;
-  const famIc = opts.fam ? `<span class="hfam" style="color:${fc(opts.fam)}">${ICONS[opts.fam]}</span>` : "";
+  const famIc = opts.fam ? `<span class="hfam" style="color:${fc(opts.fam)}">${opts.ic || ICONS[opts.fam]}</span>` : "";
   return `<header class="top"><div class="row">${left}${famIc}<h1>${esc(title)}${sub ? `<small>${esc(sub)}</small>` : ""}</h1>${opts.right || ""}</div></header>`;
 }
 function cardHTML(m) {
@@ -980,6 +980,23 @@ function viewAjout(fid) {
 /* ---------- VÉHICULES ---------- */
 const VAN = `<svg viewBox="0 0 64 64" fill="currentColor"><path d="M6 20a5 5 0 0 1 5-5h25a3 3 0 0 1 3 3v6h8.5a4 4 0 0 1 3.1 1.5l7.6 9.5a4 4 0 0 1 .8 2.4V44a3 3 0 0 1-3 3h-3a8 8 0 0 0-16 0H24a8 8 0 0 0-16 0H9a3 3 0 0 1-3-3zm35 9v8h14l-6.4-8z" fill-rule="evenodd"/><path fill-rule="evenodd" d="M10 48a6 6 0 1 0 12 0a6 6 0 1 0-12 0zm3.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0zM40 48a6 6 0 1 0 12 0a6 6 0 1 0-12 0zm3.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0z"/></svg>`;
 ICONS.vehicule = VAN;
+/* silhouettes des véhicules (vue de côté), choisies d'après le modèle */
+const VEH_IC = {
+  fourgon: `<svg viewBox="0 0 64 64" fill="currentColor"><path fill-rule="evenodd" d="M3 15a4 4 0 0 1 4-4h33a3 3 0 0 1 2.7 1.7L48 24l8.5 3.6A3 3 0 0 1 58.4 30v13a3 3 0 0 1-3 3h-2.6a7 7 0 0 0-13.6 0H23.8a7 7 0 0 0-13.6 0H6a3 3 0 0 1-3-3zm37.6 1.5H37V26h8.5z"/><path d="M22 14v29M33 14v29" stroke="#000" stroke-opacity=".18" stroke-width="1.6"/><path fill-rule="evenodd" d="M11 47a6 6 0 1 0 12 0a6 6 0 1 0-12 0zm3.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0zM40 47a6 6 0 1 0 12 0a6 6 0 1 0-12 0zm3.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0z"/></svg>`,
+  benne: `<svg viewBox="0 0 64 64" fill="currentColor"><path d="M2 24h34v14H5z" transform="rotate(-12 36 38)"/><path d="M6 21l2-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" transform="rotate(-12 36 38)"/><path fill-rule="evenodd" d="M38 21a3 3 0 0 1 3-3h8a3 3 0 0 1 2.5 1.3L57 28l3 1.6V43a3 3 0 0 1-3 3h-3.2a7 7 0 0 0-13.6 0H22.8a7 7 0 0 0-13.6 0H5a2 2 0 0 1-2-2v-4h35zm4 1v8h11l-5.2-8z"/><path d="M30 39l8-10" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><path fill-rule="evenodd" d="M10 47a6 6 0 1 0 12 0a6 6 0 1 0-12 0zm3.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0zM41 47a6 6 0 1 0 12 0a6 6 0 1 0-12 0zm3.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0z"/></svg>`,
+  ludospace: `<svg viewBox="0 0 64 64" fill="currentColor"><path fill-rule="evenodd" d="M5 27a5 5 0 0 1 5-5h26c2 0 3.8.9 5 2.5L46 31l9 2.5a4 4 0 0 1 3 3.9V43a3 3 0 0 1-3 3h-2.2a7 7 0 0 0-13.6 0H23.8a7 7 0 0 0-13.6 0H8a3 3 0 0 1-3-3zm33 0h-6v5h11zM10 27v5h18v-5z"/><path fill-rule="evenodd" d="M11 47a6 6 0 1 0 12 0a6 6 0 1 0-12 0zm3.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0zM40 47a6 6 0 1 0 12 0a6 6 0 1 0-12 0zm3.5 0a2.5 2.5 0 1 0 5 0a2.5 2.5 0 1 0-5 0z"/></svg>`,
+  citadine: `<svg viewBox="0 0 64 64" fill="currentColor"><path fill-rule="evenodd" d="M7 40c0-2.6 1.8-4.6 4.3-5L19 33.5l6.2-7.3a6 6 0 0 1 4.6-2.2h8.4a6 6 0 0 1 4.9 2.6l4.4 6.4 5.5 1.4a3 3 0 0 1 2.3 2.9V43a3 3 0 0 1-3 3h-2.4a6 6 0 0 0-11.8 0H25.9a6 6 0 0 0-11.8 0H10a3 3 0 0 1-3-3zm23-12.5l-5 6h9.5v-6zm8 0v6h8.2l-3.4-5a2 2 0 0 0-1.6-1z"/><path fill-rule="evenodd" d="M14.5 47a5.5 5.5 0 1 0 11 0a5.5 5.5 0 1 0-11 0zm3.3 0a2.2 2.2 0 1 0 4.4 0a2.2 2.2 0 1 0-4.4 0zM38.5 47a5.5 5.5 0 1 0 11 0a5.5 5.5 0 1 0-11 0zm3.3 0a2.2 2.2 0 1 0 4.4 0a2.2 2.2 0 1 0-4.4 0z"/></svg>`,
+  suv: `<svg viewBox="0 0 64 64" fill="currentColor"><path d="M16 14h28" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><path d="M20 14v3M40 14v3" stroke="currentColor" stroke-width="2.5"/><path fill-rule="evenodd" d="M4 30a3 3 0 0 1 2.4-3L14 25.5l5-6.5a5 5 0 0 1 4-2h21a5 5 0 0 1 4 1.9l5.5 7 3.5.6a3 3 0 0 1 2.5 3V42a3 3 0 0 1-3 3h-3.6a8 8 0 0 0-15.8 0H24.4a8 8 0 0 0-15.8 0H7a3 3 0 0 1-3-3zm19.5-9.5l-4.4 5.5H32v-5.5zm12.5 0V26h13.4l-3.6-4.6a2 2 0 0 0-1.6-.9z"/><path fill-rule="evenodd" d="M9 46a7.5 7.5 0 1 0 15 0a7.5 7.5 0 1 0-15 0zm4.3 0a3.2 3.2 0 1 0 6.4 0a3.2 3.2 0 1 0-6.4 0zM40 46a7.5 7.5 0 1 0 15 0a7.5 7.5 0 1 0-15 0zm4.3 0a3.2 3.2 0 1 0 6.4 0a3.2 3.2 0 1 0-6.4 0z"/></svg>`,
+};
+function vehKind(m) {
+  const t = norm(`${m.modele || ""}`);
+  if (/benne|plateau|pick/.test(t)) return "benne";
+  if (/kangoo|berlingo|partner|caddy|doblo|citan|express/.test(t)) return "ludospace";
+  if (/ds ?7|3008|5008|suv|duster|kadjar|tiguan|captur/.test(t)) return "suv";
+  if (/clio|308|208|polo|golf|megane|corsa|c3|yaris|twingo|zoe/.test(t)) return "citadine";
+  return "fourgon";
+}
+const vehIcon = m => VEH_IC[vehKind(m)];
 const plaqueHTML = (m, big) => `<span class="plate ${big ? "big" : ""} ${m.plaque ? "" : "vide"}"><i>F</i><span>${esc(m.plaque || "plaque à compléter")}</span></span>`;
 const vsc = id => `var(--s-${id})`;
 function segHTML(on) {
@@ -998,7 +1015,7 @@ function vcardHTML(m) {
   const dues = bad.map(x => `<span class="due ${x.niveau}">${court(x).replace(/^./, c => c.toUpperCase())} : ${esc(echTxt(x))}</span>`).join("")
     + (vide.length ? `<span class="due vide">📅 À remplir : ${vide.map(court).join(", ")}</span>` : "")
     || `<span class="due ok">Tout est à jour</span>`;
-  return `<a class="vcard ${m.actif === false ? "off" : ""}" href="#/machine/${encodeURIComponent(m.id)}" style="--c:${vsc(st)}"><span class="vi">${VAN}</span>
+  return `<a class="vcard ${m.actif === false ? "off" : ""}" href="#/machine/${encodeURIComponent(m.id)}" style="--c:${vsc(st)}"><span class="vi">${vehIcon(m)}</span>
     <span class="vt">${plaqueHTML(m)}<small><b>${esc(m.modele || "")}</b> · ${esc(teamLabel(m.equipe))}</small><span class="dues">${dues}</span></span><span class="pill">${esc(VST[st].nom)}</span></a>`;
 }
 function viewVehicules() {
@@ -1035,9 +1052,9 @@ function viewVehicule(m) {
         : x.niveau === "apres" ? `${fait(x)}<p>${m.pol_le ? "Déjà fait depuis le dernier contrôle technique : le prochain se fera après le CT." : "À faire 1 an après le premier contrôle technique."}</p>`
         : `${fait(x)}<p>${x.k === "rev" ? "Prochaine" : "Prochain"} avant le <b>${frDate(x.due)}</b>${x.avant ? " <span class='muted'>(date notée)</span>" : ` · délai ${esc(DELAIS[m[x.mois]] || `${m[x.mois]} mois`)}`}</p>`}
       <div class="row2"><button class="btn light" data-act="ech" data-k="${x.k}" data-d="auj">✅ ${x.k === "rev" ? "Faite" : "Fait"} aujourd'hui</button><button class="btn light" data-act="ech" data-k="${x.k}" data-d="autre">📅 Autre date</button></div>${report(x)}</div>`;
-  return header(disp(m), m.plaque ? m.modele : "Véhicule", { fam: "vehicule" }) + `<main>
+  return header(disp(m), m.plaque ? m.modele : "Véhicule", { fam: "vehicule", ic: vehIcon(m) }) + `<main>
     ${otherDraft ? `<a class="draftwarn" href="#/machine/${encodeURIComponent(DRAFT.id)}">⚠️ Corrections non enregistrées sur <b>${esc(disp(otherDraft))}</b> : touche ici pour les valider.</a>` : ""}
-    <div class="hero" style="--c:${vsc(st)}"><span class="fam">${VAN}</span>
+    <div class="hero" style="--c:${vsc(st)}"><span class="fam">${vehIcon(m)}</span>
       <div class="id">${plaqueHTML(m, true)}</div><div class="mod" style="margin-top:8px">${esc(m.modele || "")}${m.type_vehicule ? ` · ${esc(VTYPES[m.type_vehicule] || m.type_vehicule)}` : ""}</div>
       <div class="st">${esc(VST[st].nom)}</div><div class="since">${esc(m.lieu === "reparateur" ? `Au garage${m.reparateur ? ` : ${m.reparateur}` : ""}` : teamLabel(m.equipe))}${m.depuis ? ` · ${esc(sinceTxt(m.depuis))}` : ""}</div>
       ${m.motif && ["probleme", "reparation", "hs", "revision"].includes(st) ? `<div class="since">${m.probleme_type && st === "probleme" ? `${esc(m.probleme_type)} : ` : ""}« ${esc(m.motif)} »</div>` : ""}</div>
@@ -1367,8 +1384,17 @@ const TAILLES = { t_pantalon: ["36", "38", "40", "42", "44", "46", "48", "50", "
 const TAILLES_HAUT = ["XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL"];
 const TEAMC = ["#37474f", "#2e7d32", "#1565c0", "#ad1457", "#6a1b9a", "#e65100", "#00838f", "#5d4037", "#c62828", "#283593"];
 const teamColor = n => n == null ? "#78909c" : TEAMC[n % TEAMC.length];
-const persEq = p => p.equipe == null ? "Sans équipe" : teamLabel(p.equipe);
-const baseTaille = v => String(v || "").split(" · ")[0].trim();
+/* seuls les chefs d'équipe ont un numéro ; les autres vont d'une équipe à l'autre */
+const chefDe = p => { const n = teamNums().find(k => S.equipes[k] && norm(S.equipes[k].chef).trim() && norm(S.equipes[k].chef).trim() === norm(p.prenom).trim()); return n == null ? null : n; };
+const persEq = p => { const n = chefDe(p); return n == null ? "" : `Chef équipe ${n}`; };
+const persCol = p => { const n = chefDe(p); return n == null ? "#43a047" : teamColor(n); };
+const baseTaille = v => String(v || "").trim();
+/* tailles proposées : les tailles habituelles + celles déjà tapées à la main pour quelqu'un */
+function taillesDe(k) {
+  const opts = TAILLES[k] || TAILLES_HAUT, plus = new Set();
+  (PERS || []).forEach(p => { const v = baseTaille(p[k]); if (v && !opts.includes(v)) plus.add(v); });
+  return [...opts, ...[...plus].sort(natural)];
+}
 let PERS = null, PERS_ERR = "";
 async function loadPersonnel(rerender) {
   if (!supa || !navigator.onLine) { PERS_ERR = PERS ? "" : "Il faut du réseau pour voir les tenues."; if (rerender) softRender(); return; }
@@ -1380,8 +1406,8 @@ const manque = p => TENUES.filter(t => !p[t.k]).length;
 function viewTenues(q) {
   if (!isChef()) return viewHome();
   const txt = (q.get("q") || "").trim();
-  const all = persActifs(), list = txt ? all.filter(p => fuzzyScore(txt, `${p.prenom} | ${persEq(p)} | equipe ${p.equipe ?? ""}`) >= 0) : all;
-  const card = p => { const n = manque(p); return `<a class="pp" href="#/tenue/${encodeURIComponent(p.id)}"><span class="av2" style="background:${teamColor(p.equipe)}">${esc((p.prenom || "?")[0].toUpperCase())}</span><b>${esc(p.prenom)}</b><small>${esc(persEq(p))}</small><span class="${n ? "ko2" : "ok2"}">${n ? `${n} à remplir` : "Complet"}</span></a>`; };
+  const all = persActifs(), list = txt ? all.filter(p => fuzzyScore(txt, `${p.prenom} | ${persEq(p)}`) >= 0) : all;
+  const card = p => { const n = manque(p); return `<a class="pp" href="#/tenue/${encodeURIComponent(p.id)}"><span class="av2" style="background:${persCol(p)}">${esc((p.prenom || "?")[0].toUpperCase())}</span><b>${esc(p.prenom)}</b>${persEq(p) ? `<small>${esc(persEq(p))}</small>` : ""}<span class="${n ? "ko2" : "ok2"}">${n ? `${n} à remplir` : "Complet"}</span></a>`; };
   return header("Tenues", "Tailles du personnel · Cyril et Nico") + `<main>
     <input class="search" id="tenue-search" type="search" placeholder="🔍 Chercher une personne…" autocomplete="off" value="${esc(txt)}">
     ${PERS == null ? `<p class="muted">${esc(PERS_ERR || "Chargement…")}</p>` : `<div class="ppl">${list.map(card).join("") || `<div class="empty" style="grid-column:1/-1">${all.length ? "Personne trouvé." : "Personne pour l'instant : ajoute le personnel avec le bouton ci-dessous."}</div>`}</div>`}
@@ -1392,37 +1418,38 @@ function viewTenue(id) {
   const p = (PERS || []).find(x => x.id === id);
   if (!p) return header("Tenue", "") + `<main><p class="muted">${esc(PERS == null ? (PERS_ERR || "Chargement…") : "Personne introuvable.")}</p></main>`;
   const n = manque(p);
-  return header(p.prenom, `${persEq(p)} · Tenue`) + `<main>
-    <div class="ph"><span class="av2" style="background:rgba(255,255,255,.25);margin:0">${esc((p.prenom || "?")[0].toUpperCase())}</span><div><b>${esc(p.prenom)}</b><small>${esc(persEq(p))} · ${8 - n} taille${8 - n > 1 ? "s" : ""} sur 8</small></div></div>
+  return header(p.prenom, persEq(p) ? `${persEq(p)} · Tenue` : "Tenue") + `<main>
+    <div class="ph"><span class="av2" style="background:rgba(255,255,255,.25);margin:0">${esc((p.prenom || "?")[0].toUpperCase())}</span><div><b>${esc(p.prenom)}</b><small>${persEq(p) ? `${esc(persEq(p))} · ` : ""}${8 - n} taille${8 - n > 1 ? "s" : ""} sur 8</small></div></div>
     ${p.actif === false ? `<div class="lock">Retiré(e) de la liste.</div>` : ""}
     <div class="gt">${TENUES.map(t => `<button class="gtile ${t.c} ${p[t.k] ? "" : "vide"}" data-act="taille" data-k="${t.k}"><span class="ic">${TENUE_IC[t.ic]}</span><span><small>${esc(t.nom)}</small><b>${esc(p[t.k] || "à remplir")}</b></span></button>`).join("")}</div>
     <p class="muted" style="margin:8px 0">Touche une case pour changer la taille.${p.maj ? ` Dernière modif : ${esc(nomDe(p.maj_par) || "?")}, le ${frDate(String(p.maj).slice(0, 10))}.` : ""}</p>
-    <div class="duo2"><button class="btn light" data-act="pers-edit">✏️ Prénom / équipe</button>${p.actif === false ? `<button class="btn light" data-act="pers-actif" data-v="true">Remettre dans la liste</button>` : `<button class="btn light" data-act="pers-actif" data-v="false">Retirer de la liste</button>`}</div></main>`;
+    <div class="duo2"><button class="btn light" data-act="pers-edit">✏️ Changer le prénom</button>${p.actif === false ? `<button class="btn light" data-act="pers-actif" data-v="true">Remettre dans la liste</button>` : `<button class="btn light" data-act="pers-actif" data-v="false">Retirer de la liste</button>`}</div></main>`;
 }
 function viewCompteur() {
   if (!isChef()) return viewHome();
   const all = persActifs();
   const rows = TENUES.map(t => {
-    const opts = TAILLES[t.k] || TAILLES_HAUT, c = {}; let vide = 0;
+    const opts = taillesDe(t.k), c = {}; let vide = 0;
     all.forEach(p => { const b = baseTaille(p[t.k]); if (!b) vide++; else c[b] = (c[b] || 0) + 1; });
     const autres = Object.keys(c).filter(k => !opts.includes(k)).sort(natural);
-    const chips = [...opts.filter(o => c[o]), ...autres].map(o => `<span class="cz"><b>${esc(o)}</b>${c[o]}</span>`).join("") + (vide ? `<span class="cz q"><b>?</b>${vide}</span>` : "");
+    const chips = [...opts.filter(o => c[o]), ...autres].map(o => `<span class="cz"><b>${esc(o)}</b>${c[o]}</span>`).join("") + (vide ? `<span class="cz q"><b>à remplir</b>${vide}</span>` : "");
     return `<div class="crow"><span class="ic2">${TENUE_IC[t.ic]}</span><div><small>${esc(t.nom)}</small><div class="czs">${chips || `<span class="muted">—</span>`}</div></div></div>`;
   }).join("");
   return header("Compteur des tailles", `${all.length} personne${all.length > 1 ? "s" : ""}`) + `<main class="compact">${PERS == null ? `<p class="muted">${esc(PERS_ERR || "Chargement…")}</p>` : rows}
-    <p class="muted" style="margin:2px 0 0;font-size:12px">« <b>L</b> 6 » = 6 personnes en L. En orange : tailles pas encore remplies.</p></main>`;
+    <p class="muted" style="margin:2px 0 0;font-size:12px">« <b>L</b> 6 » = 6 personnes en L. « à remplir » = personnes dont la taille n'est pas encore notée.</p></main>`;
 }
 function askTaille(id, k) {
   const p = (PERS || []).find(x => x.id === id), t = TENUES.find(x => x.k === k); if (!p || !t) return;
   if (!navigator.onLine) return infoModal("Pas de réseau", `<p class="mq">Il faut du réseau pour changer une taille.</p>`);
-  const opts = TAILLES[k] || TAILLES_HAUT, cur = baseTaille(p[k]), prec = String(p[k] || "").split(" · ")[1] || "";
+  const opts = taillesDe(k), cur = baseTaille(p[k]);
   openModal({ title: `${esc(t.nom)} de ${esc(p.prenom)}`, center: true, ok: "Oui, enregistrer",
     html: `<p class="mq">Quelle taille ?</p><div class="sz" id="m-sz">${opts.map(o => `<button type="button" data-act="sz" data-v="${o}" class="${o === cur ? "on" : ""}">${o}</button>`).join("")}</div>
-      <label class="f" for="m-sz-autre">Autre taille ou précision <span class="muted">(facultatif)</span></label><input class="inp" id="m-sz-autre" value="${esc(opts.includes(cur) ? prec : (p[k] || ""))}" placeholder="ex. long, coupe large, 42/44…">
+      <label class="f" for="m-sz-autre">Autre taille <span class="muted">(si elle n'est pas dans les boutons)</span></label><input class="inp" id="m-sz-autre" value="" placeholder="ex. 42 long, 5XL, 42/44…">
+      <p class="muted" style="margin:4px 0 0">Une taille tapée ici devient un nouveau bouton, proposé ensuite pour tout le monde.</p>
       <p class="muted">${p[k] ? `Avant : ${esc(p[k])}. ` : ""}Le changement est gardé dans l'historique.</p>`,
     onOk: async () => {
-      const on = MODAL.el.querySelector("#m-sz .on"), autre = mval("m-sz-autre");
-      const v = on ? (autre ? `${on.dataset.v} · ${autre}` : on.dataset.v) : autre;
+      const on = MODAL.el.querySelector("#m-sz .on"), autre = mval("m-sz-autre").replace(/\s+/g, " ");
+      const v = autre || (on ? on.dataset.v : "");
       if (!v) { $("#m-msg").innerHTML = `<div class="msg err">Choisis une taille (ou écris-la).</div>`; return false; }
       const { data, error } = await supa.rpc("personne_maj", { p_id: id, p_champ: k, p_valeur: v });
       if (error || !data) { $("#m-msg").innerHTML = `<div class="msg err">${isNetErr(error) ? "Pas de réseau : réessaie dans un instant." : "Refusé (" + esc(error && error.message) + ")."}</div>`; return false; }
@@ -1432,21 +1459,19 @@ function askTaille(id, k) {
 function askPersonne(id) {
   const p = id ? (PERS || []).find(x => x.id === id) : null;
   if (!navigator.onLine) return infoModal("Pas de réseau", `<p class="mq">Il faut du réseau pour ça.</p>`);
-  const teamOpts = `<option value="">Pas d'équipe / bureau</option>` + teamNums().map(n => `<option value="${n}" ${p && p.equipe === n ? "selected" : ""}>${esc(teamLabel(n))}</option>`).join("");
   openModal({ title: p ? `Modifier ${esc(p.prenom)}` : "Ajouter une personne", center: true, ok: "Oui, enregistrer",
     html: `<label class="f" for="m-pp">Prénom (et nom si besoin)</label><input class="inp" id="m-pp" value="${esc(p ? p.prenom : "")}" autocomplete="off">
-      <label class="f" for="m-pe">Équipe</label><select class="inp" id="m-pe">${teamOpts}</select>`,
+      <p class="muted" style="margin:6px 0 0">Les chefs d'équipe sont reconnus tout seuls (même prénom que dans « Les équipes »).</p>`,
     onOpen: d => setTimeout(() => d.querySelector("#m-pp").focus(), 50),
     onOk: async () => {
-      const prenom = mval("m-pp"), eq = mval("m-pe");
+      const prenom = mval("m-pp");
       if (!prenom) { $("#m-msg").innerHTML = `<div class="msg err">Indique le prénom.</div>`; return false; }
       if (!p && persActifs().some(x => norm(x.prenom) === norm(prenom)) && !MODAL.el.__okDbl) { MODAL.el.__okDbl = true; $("#m-msg").innerHTML = `<div class="msg err">${esc(prenom)} est déjà dans la liste. Si c'est une autre personne, appuie encore une fois sur « Oui, enregistrer » (ajoute plutôt le nom pour les distinguer).</div>`; return false; }
       let res;
-      if (!p) res = await supa.rpc("personne_ajouter", { p_prenom: prenom, p_equipe: eq === "" ? null : +eq });
+      if (!p) res = await supa.rpc("personne_ajouter", { p_prenom: prenom, p_equipe: null });
       else {
         res = { data: p };
         if (prenom !== p.prenom) res = await supa.rpc("personne_maj", { p_id: p.id, p_champ: "prenom", p_valeur: prenom });
-        if (!res.error && String(eq) !== String(p.equipe ?? "")) res = await supa.rpc("personne_maj", { p_id: p.id, p_champ: "equipe", p_valeur: eq });
       }
       if (res.error || !res.data) { $("#m-msg").innerHTML = `<div class="msg err">${isNetErr(res.error) ? "Pas de réseau : réessaie dans un instant." : "Refusé (" + esc(res.error && res.error.message) + ")."}</div>`; return false; }
       if (p) Object.assign(p, res.data); else { (PERS = PERS || []).push(res.data); setTimeout(() => go(`#/tenue/${encodeURIComponent(res.data.id)}`), 0); }
