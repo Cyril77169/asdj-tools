@@ -1,7 +1,7 @@
 /* ASDJ - Tools : suivi du matériel par famille et par équipe.
    Données partagées entre les comptes connectés (Supabase), copie locale + file d'attente pour le hors ligne. */
 "use strict";
-const APP_V = 11;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
+const APP_V = 12;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
 const CFG = window.APP_CONFIG;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -48,6 +48,7 @@ const VST = Object.fromEntries(VSTATUTS.map(s => [s.id, s]));
 const VPRIO = { probleme: 0, reparation: 1, revision: 2, hs: 3, disponible: 4, operationnelle: 5 };
 const PB_TYPES = ["Accrochage / carrosserie", "Pare-choc", "Rétroviseur", "Feu / éclairage", "Pneu", "Moteur / voyant", "Freins", "Autre"];
 const VTYPES = { utilitaire: "Utilitaire / camionnette", voiture: "Voiture" };
+const LIEU = { ct: "ct_lieu", pol: "pol_lieu", rev: "rev_garage" };
 const ECH = [
   { k: "ct", nom: "Contrôle technique", le: "ct_le", mois: "ct_mois", f: "fait" },
   { k: "pol", nom: "Contrôle pollution", le: "pol_le", mois: "pol_mois", f: "fait" },
@@ -64,9 +65,10 @@ function echeances(m) {
       const reste = +m.rev_cible_km - (+m.km || 0);
       return Object.assign({}, e, { mode: "km", reste, due: `km${m.rev_cible_km}`, jours: reste <= 0 ? -1 : reste <= 1000 ? 1 : 999, niveau: reste <= 0 ? "late" : reste <= 1000 ? "warn" : "ok" });
     }
-    if (e.k === "rev" && m.rev_mode === "rdv" && m.rev_rdv) {                  // révision : rendez-vous pris
-      const [ry, rm, rd] = String(m.rev_rdv).slice(0, 10).split("-").map(Number), j = Math.round((new Date(ry, rm - 1, rd) - now) / 864e5);
-      return Object.assign({}, e, { mode: "rdv", due: `rdv${m.rev_rdv}`, jours: j <= 0 ? 0 : 999, niveau: j <= 0 ? "warn" : "ok", rdvj: j, rdv: String(m.rev_rdv).slice(0, 10) });
+    const rdvd = m[`${e.k}_rdv`];
+    if (rdvd) {                                                                // rendez-vous pris (CT, pollution ou révision)
+      const [ry, rm, rd] = String(rdvd).slice(0, 10).split("-").map(Number), j = Math.round((new Date(ry, rm - 1, rd) - now) / 864e5);
+      return Object.assign({}, e, { mode: "rdv", due: `rdv${String(rdvd).slice(0, 10)}`, jours: j <= 0 ? 0 : 999, niveau: j <= 0 ? "warn" : "ok", rdvj: j, rdv: String(rdvd).slice(0, 10), lieu: m[LIEU[e.k]] || "" });
     }
     const av = m[`${e.k}_avant`]; let due = null;
     if (av) due = String(av).slice(0, 10);                                     // date « avant le » (carte grise)
@@ -81,7 +83,7 @@ function echeances(m) {
   });
 }
 const kmf = n => `${Number(n).toLocaleString("fr-FR")} km`;
-const echTxt = x => x.mode === "km" ? (x.reste > 0 ? `dans ${kmf(x.reste)}` : `dépassé de ${kmf(-x.reste)}`) : x.mode === "rdv" ? (x.rdvj > 0 ? `RDV le ${frDate(x.rdv)}` : "RDV passé : faite ?") : x.niveau === "apres" ? "après le prochain CT" : x.niveau === "vide" ? "date à remplir" : x.niveau === "late" ? `dépassé de ${-x.jours} j` : x.jours === 0 ? "aujourd'hui" : x.niveau === "warn" ? `dans ${x.jours} jour${x.jours > 1 ? "s" : ""}` : "à jour";
+const echTxt = x => x.mode === "km" ? (x.reste > 0 ? `dans ${kmf(x.reste)}` : `dépassé de ${kmf(-x.reste)}`) : x.mode === "rdv" ? (x.rdvj > 0 ? `RDV le ${frDate(x.rdv)}` : x.rdvj === 0 ? "RDV aujourd'hui" : `RDV passé : ${x.k === "rev" ? "faite" : "fait"} ?`) : x.niveau === "apres" ? "après le prochain CT" : x.niveau === "vide" ? "date à remplir" : x.niveau === "late" ? `dépassé de ${-x.jours} j` : x.jours === 0 ? "aujourd'hui" : x.niveau === "warn" ? `dans ${x.jours} jour${x.jours > 1 ? "s" : ""}` : "à jour";
 function alertes() { const out = []; vehicules().forEach(m => echeances(m).forEach(x => { if (x.niveau === "warn" || x.niveau === "late") out.push(Object.assign({ m }, x)); })); return out.sort((a, b) => a.jours - b.jours); }
 const vprio = m => { const a = echeances(m); return (VPRIO[m.statut] ?? 9) * 10 + (a.some(x => x.niveau === "late") ? 0 : a.some(x => x.niveau === "warn") ? 1 : 5); };
 const sc = id => `var(--s-${id})`;
@@ -467,6 +469,7 @@ const mval = id => { const e = document.getElementById(id); return e ? e.value.t
 const mfile = id => { const e = document.getElementById(id); return e && e.files && e.files[0]; };
 
 /* ---------- rendu ---------- */
+const GEAR = () => `<button class="iconbtn" data-act="go" data-h="#/parametres" aria-label="Paramètres"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>`;
 function header(title, sub, opts = {}) {
   const left = opts.home
     ? `<img class="logo" src="icons/icon-192.png" alt="">`
@@ -495,14 +498,13 @@ function viewHome() {
       <h2>${esc(f.nom)}</h2><span class="n">${l.length} machine${l.length > 1 ? "s" : ""}</span>${barHTML(l)}${dotsHTML(l, URGENTS)}</a>`;
   }).join("");
   const teams = teamNums();
-  return header("ASDJ - Tools", "Au service des jardins", { home: true, right: `<button class="iconbtn" data-act="logout" aria-label="Se déconnecter">${SVG.out}</button>` }) +
+  return header("ASDJ - Tools", "Au service des jardins", { home: true, right: GEAR() }) +
     `<main>${segHTML("m")}${alertBandHTML(false)}<input class="search" id="home-search" type="search" placeholder="🔍 Code, modèle, chef, type de machine…" autocomplete="off">
     ${summaryHTML(all, "#/tout?")}
     <div class="tiles">${tiles}</div>
     <a class="sechead" href="#/equipes"><span class="tb-ic">${SVG.team}</span><b>Les équipes</b><span class="sp"></span><small>Tout voir</small>${SVG.chev}</a>
     <div class="tgrid">${teams.map(n => teamCard(n, all)).join("")}</div>
     <a class="allband" href="#/tout"><span class="tb-ic">${SVG.list}</span><span class="tb-txt"><b>Toutes les machines</b><small>${all.length} machines</small></span><span class="tb-chev">${SVG.chev}</span></a>
-    ${isChef() ? `<a class="thin" href="#/activite">📋 <u>Activité et annulations</u> ›</a>` : ""}
     </main>`;
 }
 
@@ -598,6 +600,8 @@ const EVT = {
   revision: { nom: "En attente de révision", c: "revision" },
   rev_attente: { nom: "Révision : attendre un kilométrage", c: "revision" },
   rev_rdv: { nom: "Révision : rendez-vous pris", c: "revision" },
+  ct_rdv: { nom: "Contrôle technique : rendez-vous pris", c: "revision" },
+  pol_rdv: { nom: "Contrôle pollution : rendez-vous pris", c: "revision" },
 };
 function evLines(e) {
   const lines = [];
@@ -711,13 +715,13 @@ function viewMachine(id) {
   </main>
   <div class="savebar ${dirty ? "" : "hidden"}" id="savebar"><span>Modifications non enregistrées</span><button class="btn light" data-act="draft-cancel">Annuler</button><button class="btn" data-act="draft-save">💾 Enregistrer</button></div>`;
 }
-const CHAMPS = { rev_mode: "Choix pour la révision", rev_cible_km: "Révision prévue à (km)", rev_rdv: "Rendez-vous révision", rev_garage: "Garage révision", rev_choix: "Choix fait par", ct_avant: "Prochain CT avant le", pol_avant: "Pollution avant le", rev_avant: "Révision avant le", mise_circulation: "Mise en circulation", plaque: "Plaque", type_vehicule: "Type de véhicule", km: "Kilométrage", km_le: "Kilométrage relevé le", ct_le: "Contrôle technique fait le", ct_mois: "Délai du CT", pol_le: "Contrôle pollution fait le", pol_mois: "Délai pollution", rev_le: "Révision faite le", rev_km: "Km à la révision", rev_mois: "Délai révision", probleme_type: "Genre de problème", creation: "Ajout", _num: "Numéro", numero: "Numéro", pret_a: "Prêtée à", pret_le: "Prêtée le", depose_par: "Déposée par", depose_le: "Déposée le", recupere_par: "Récupérée par", recupere_le: "Récupérée le", photo: "Photo", statut: "État", lieu: "Lieu", reparateur: "Réparateur", depuis: "Depuis", motif: "Pourquoi", equipe: "Équipe", controle: "Contrôle", modele: "Modèle", notes: "Notes", actif: "Dans le parc", affectation: "Affectation", famille: "Type" };
+const CHAMPS = { ct_rdv: "Rendez-vous CT", ct_lieu: "Centre de contrôle (CT)", pol_rdv: "Rendez-vous pollution", pol_lieu: "Centre de contrôle (pollution)", rev_mode: "Choix pour la révision", rev_cible_km: "Révision prévue à (km)", rev_rdv: "Rendez-vous révision", rev_garage: "Garage révision", rev_choix: "Choix fait par", ct_avant: "Prochain CT avant le", pol_avant: "Pollution avant le", rev_avant: "Révision avant le", mise_circulation: "Mise en circulation", plaque: "Plaque", type_vehicule: "Type de véhicule", km: "Kilométrage", km_le: "Kilométrage relevé le", ct_le: "Contrôle technique fait le", ct_mois: "Délai du CT", pol_le: "Contrôle pollution fait le", pol_mois: "Délai pollution", rev_le: "Révision faite le", rev_km: "Km à la révision", rev_mois: "Délai révision", probleme_type: "Genre de problème", creation: "Ajout", _num: "Numéro", numero: "Numéro", pret_a: "Prêtée à", pret_le: "Prêtée le", depose_par: "Déposée par", depose_le: "Déposée le", recupere_par: "Récupérée par", recupere_le: "Récupérée le", photo: "Photo", statut: "État", lieu: "Lieu", reparateur: "Réparateur", depuis: "Depuis", motif: "Pourquoi", equipe: "Équipe", controle: "Contrôle", modele: "Modèle", notes: "Notes", actif: "Dans le parc", affectation: "Affectation", famille: "Type" };
 function histVal(c, v, veh) {
   if (v == null || v === "") return "—";
   if (c === "statut") return veh ? (VST[v] ? VST[v].nom : v) : ST[v] ? ST[v].nom : (VST[v] ? VST[v].nom : v);
   if (["km_le", "ct_le", "pol_le", "rev_le", "ct_avant", "pol_avant", "rev_avant", "mise_circulation"].includes(c)) return frDate(v);
   if (c === "rev_mode") return v === "km" ? "attendre un kilométrage" : v === "rdv" ? "rendez-vous" : v;
-  if (c === "rev_rdv") return frDate(v);
+  if (["rev_rdv", "ct_rdv", "pol_rdv"].includes(c)) return frDate(v);
   if (["km", "rev_km", "rev_cible_km"].includes(c)) return `${Number(v).toLocaleString("fr-FR")} km`;
   if (["ct_mois", "pol_mois", "rev_mois"].includes(c)) return DELAIS[v] || `${v} mois`;
   if (c === "type_vehicule") return VTYPES[v] || v;
@@ -966,7 +970,7 @@ function viewVehicules() {
   const off = Object.values(S.machines).filter(m => isVeh(m) && m.actif === false);
   const c = {}; VSTATUTS.forEach(s => c[s.id] = 0); all.forEach(m => c[VST[m.statut] ? m.statut : "operationnelle"]++);
   const cell = (id, big) => `<div class="sum ${big ? "big" : ""} ${c[id] ? "" : "zero"}" style="--c:${vsc(id)}"><b>${c[id]}</b><span>${esc(VST[id].nom)}</span></div>`;
-  return header("ASDJ - Tools", "Au service des jardins", { home: true, right: `<button class="iconbtn" data-act="logout" aria-label="Se déconnecter">${SVG.out}</button>` }) + `<main>
+  return header("ASDJ - Tools", "Au service des jardins", { home: true, right: GEAR() }) + `<main>
     ${segHTML("v")}${alertBandHTML(true)}
     <div class="summary vsumm"><div class="sumrow two">${cell("probleme", 1)}${cell("reparation", 1)}</div>
     <div class="sumrow three">${cell("operationnelle")}${cell("disponible")}${cell("revision")}</div>${c.hs ? `<div class="sumrow">${cell("hs")}</div>` : ""}</div>
@@ -985,10 +989,12 @@ function viewVehicule(m) {
   const ech = echeances(m);
   const fait = x => m[x.le] ? `<p>${x.k === "rev" ? "Faite" : "Fait"} le ${frDate(m[x.le])}${x.k === "rev" && m.rev_km ? ` à ${Number(m.rev_km).toLocaleString("fr-FR")} km` : ""}</p>` : "";
   const choix = m.rev_choix ? `<p class="muted">Choix de ${esc(m.rev_choix)}.</p>` : "";
-  const report = x => x.k === "rev" && (x.niveau === "warn" || x.niveau === "late" || x.mode) ? `<button class="btn light" style="margin-top:8px" data-act="rev-report">⏳ Pas tout de suite : rendez-vous ou kilométrage</button>` : "";
+  const report = x => !(x.niveau === "warn" || x.niveau === "late" || x.mode) ? ""
+    : x.k === "rev" ? `<button class="btn light" style="margin-top:8px" data-act="rev-report">⏳ Pas tout de suite : rendez-vous ou kilométrage</button>`
+    : `<button class="btn light" style="margin-top:8px" data-act="rev-choix" data-c="rdv" data-k="${x.k}" data-id="${esc(id)}">📅 ${x.mode === "rdv" ? "Changer le rendez-vous" : "Rendez-vous pris (noter la date)"}</button>`;
   const echRow = x => `<div class="echrow ${["ok", "apres"].includes(x.niveau) ? "" : x.niveau}"><h4>${esc(x.nom)} <span class="due ${x.niveau === "apres" ? "ok" : x.niveau}">${esc(echTxt(x))}</span></h4>
       ${x.mode === "km" ? `${fait(x)}<p>Prévue à <b>${kmf(m.rev_cible_km)}</b> · compteur : ${m.km ? kmf(m.km) : "?"}${m.km_le ? ` (relevé le ${frDate(m.km_le)})` : ""}</p>${choix}`
-        : x.mode === "rdv" ? `${fait(x)}<p>Rendez-vous le <b>${frDate(m.rev_rdv)}</b>${m.rev_garage ? ` · ${esc(m.rev_garage)}` : ""}</p>${x.rdvj <= 0 ? `<p><b>Le rendez-vous est passé : la révision a-t-elle été faite ?</b></p>` : ""}${choix}`
+        : x.mode === "rdv" ? `${fait(x)}<p>Rendez-vous le <b>${frDate(x.rdv)}</b>${x.lieu ? ` · ${esc(x.lieu)}` : ""}</p>${x.rdvj === 0 ? `<p><b>C'est aujourd'hui.</b></p>` : x.rdvj < 0 ? `<p><b>Le rendez-vous est passé : ${x.k === "rev" ? "la révision a-t-elle été faite" : "le contrôle a-t-il été fait"} ?</b></p>` : ""}${x.k === "rev" ? choix : ""}`
         : x.niveau === "vide" ? `<p>Pas encore de date : indique quand ${x.k === "rev" ? "la dernière a été faite" : "le dernier a été fait"}.</p>`
         : x.niveau === "apres" ? `${fait(x)}<p>${m.pol_le ? "Déjà fait depuis le dernier contrôle technique : le prochain se fera après le CT." : "À faire 1 an après le premier contrôle technique."}</p>`
         : `${fait(x)}<p>${x.k === "rev" ? "Prochaine" : "Prochain"} avant le <b>${frDate(x.due)}</b>${x.avant ? " <span class='muted'>(date notée)</span>" : ` · délai ${esc(DELAIS[m[x.mois]] || `${m[x.mois]} mois`)}`}</p>`}
@@ -1114,6 +1120,8 @@ function askEch(id, k, quand) {
       if (km && !/^\d+$/.test(km)) { $("#m-msg").innerHTML = `<div class="msg err">Le kilométrage doit être un nombre.</div>`; return false; }
       const ch = { [e.le]: d };
       if (m[`${k}_avant`]) ch[`${k}_avant`] = null;
+      if (m[`${k}_rdv`]) ch[`${k}_rdv`] = null;
+      if (k !== "rev" && m[LIEU[k]]) ch[LIEU[k]] = "";
       if (k === "rev") { if (m.rev_mode) ch.rev_mode = ""; if (m.rev_cible_km) ch.rev_cible_km = null; if (m.rev_rdv) ch.rev_rdv = null; if (m.rev_garage) ch.rev_garage = ""; if (m.rev_choix) ch.rev_choix = ""; }
       if (k === "ct" && m.pol_avant) ch.pol_avant = null;      // nouveau CT : la pollution repart d'un an après
       if (km) { if (k === "rev") ch.rev_km = +km; if (!m.km_le || d >= m.km_le) { ch.km = +km; ch.km_le = d; } }
@@ -1139,12 +1147,15 @@ function askKm(id) {
 function popRow(x) {
   const m = x.m, lien = `href="#/machine/${encodeURIComponent(m.id)}" data-act="m-cancel" style="color:inherit;text-decoration:none"`;
   const det = x.mode === "km" ? `Prévue à <b>${kmf(m.rev_cible_km)}</b> · compteur : ${m.km ? kmf(m.km) : "?"}${m.km_le ? ` (relevé le ${frDate(m.km_le)})` : ""}`
-    : x.mode === "rdv" ? `Le rendez-vous était le <b>${frDate(m.rev_rdv)}</b>. La révision a-t-elle été faite ?`
+    : x.mode === "rdv" ? (x.rdvj === 0 ? `Rendez-vous <b>aujourd'hui</b>${x.lieu ? ` · ${esc(x.lieu)}` : ""}.` : `Le rendez-vous était le <b>${frDate(x.rdv)}</b>. ${x.k === "rev" ? "La révision a-t-elle été faite" : "Le contrôle a-t-il été fait"} ?`)
     : `${m[x.le] ? `${x.k === "rev" ? "Faite" : "Fait"} le ${frDate(m[x.le])}${x.k === "rev" && m.rev_km ? ` à ${kmf(m.rev_km)}` : ""} · ` : ""}à refaire avant le <b>${frDate(x.due)}</b>`;
   const btns = x.k === "rev" ? `<p style="margin-top:8px"><b>Que veux-tu faire ?</b></p><div class="choix3">
       <button class="btn light" data-act="rev-choix" data-c="rdv" data-id="${esc(m.id)}">📅 La faire dès que possible (noter la date du RDV)</button>
       <button class="btn light" data-act="rev-choix" data-c="km" data-id="${esc(m.id)}">🛣️ Attendre un kilométrage</button>
-      <button class="btn light" data-act="rev-choix" data-c="fait" data-id="${esc(m.id)}">✅ Elle est déjà faite</button></div>` : "";
+      <button class="btn light" data-act="rev-choix" data-c="fait" data-id="${esc(m.id)}">✅ Elle est déjà faite</button></div>`
+    : `<p style="margin-top:8px"><b>Que veux-tu faire ?</b></p><div class="choix3">
+      <button class="btn light" data-act="rev-choix" data-c="rdv" data-k="${x.k}" data-id="${esc(m.id)}">📅 Rendez-vous pris (noter la date)</button>
+      <button class="btn light" data-act="rev-choix" data-c="fait" data-k="${x.k}" data-id="${esc(m.id)}">✅ Il est déjà fait</button></div>`;
   return `<div class="echrow ${x.niveau}" style="margin-bottom:8px"><a ${lien}><h4>${esc(x.nom)} <span class="due ${x.niveau}">${esc(echTxt(x))}</span></h4>
     <p>${plaqueHTML(m)} ${esc(m.modele || "")}</p><p>${det}</p></a>${btns}</div>`;
 }
@@ -1167,21 +1178,21 @@ function askRevReport(id) {
       <button class="btn light" data-act="rev-choix" data-c="rdv" data-id="${esc(id)}">📅 La faire dès que possible (noter la date du RDV)</button>
       <button class="btn light" data-act="rev-choix" data-c="km" data-id="${esc(id)}">🛣️ Attendre un kilométrage</button></div>` });
 }
-function askRevChoix(id, c) {
+function askRevChoix(id, c, k = "rev") {
   const m = S.machines[id]; if (!m) return;
-  if (c === "fait") return askEch(id, "rev", "auj");
-  const qui = `${myName() || "?"} le ${frDate(today())}`;
-  if (c === "rdv") return openModal({ title: "Révision dès que possible", center: true, ok: "Oui, enregistrer",
-    html: `<p class="mq">Révision de <b>${esc(disp(m))}</b> : quand est le rendez-vous ?</p>
-      <label class="f" for="m-rdv">Date du rendez-vous</label><input class="inp" id="m-rdv" type="date" min="${today()}" value="${m.rev_rdv && m.rev_rdv >= today() ? m.rev_rdv : ""}">
-      <label class="f" for="m-rg">Garage <span class="muted">(facultatif)</span></label><input class="inp" id="m-rg" value="${esc(m.rev_garage || "")}" placeholder="Nom du garage">
-      <p class="muted">Plus d'alerte jusqu'au rendez-vous. Le jour J, l'appli demandera si la révision a bien été faite.</p>`,
+  if (c === "fait") return askEch(id, k, "auj");
+  const qui = `${myName() || "?"} le ${frDate(today())}`, e = ECH.find(x => x.k === k), rev = k === "rev";
+  if (c === "rdv") return openModal({ title: rev ? "Révision dès que possible" : `${e.nom} : rendez-vous pris`, center: true, ok: "Oui, enregistrer",
+    html: `<p class="mq">${esc(e.nom)} de <b>${esc(disp(m))}</b> : quand est le rendez-vous ?</p>
+      <label class="f" for="m-rdv">Date du rendez-vous</label><input class="inp" id="m-rdv" type="date" min="${today()}" value="${m[`${k}_rdv`] && m[`${k}_rdv`] >= today() ? m[`${k}_rdv`] : ""}">
+      <label class="f" for="m-rg">${rev ? "Garage" : "Centre de contrôle"} <span class="muted">(facultatif)</span></label><input class="inp" id="m-rg" value="${esc(m[LIEU[k]] || "")}" placeholder="${rev ? "Nom du garage" : "Ex. : Autosur, Dekra…"}">
+      <p class="muted">Plus de rappel jusqu'au rendez-vous. Le matin du jour J, une notification le rappelle ; ensuite l'appli demande si c'est fait.</p>`,
     onOk: () => {
       const d = mval("m-rdv"), g = mval("m-rg");
       if (!d) { $("#m-msg").innerHTML = `<div class="msg err">Indique la date du rendez-vous.</div>`; return false; }
       if (d < today()) { $("#m-msg").innerHTML = `<div class="msg err">La date du rendez-vous est déjà passée.</div>`; return false; }
-      addEvent(id, "rev_rdv", { rdv: d, garage: g });
-      setFields(id, { rev_mode: "rdv", rev_rdv: d, rev_garage: g, rev_cible_km: null, rev_choix: qui }); return true;
+      addEvent(id, `${k}_rdv`, { rdv: d, garage: g });
+      setFields(id, rev ? { rev_mode: "rdv", rev_rdv: d, rev_garage: g, rev_cible_km: null, rev_choix: qui } : { [`${k}_rdv`]: d, [LIEU[k]]: g }); return true;
     } });
   if (c === "km") return openModal({ title: "Attendre un kilométrage", center: true, ok: "Oui, enregistrer",
     html: `<p class="mq">Révision de <b>${esc(disp(m))}</b> : on attend un kilométrage.</p>
@@ -1238,6 +1249,66 @@ function maybeAlertPopup() {
       + `<p class="muted" style="margin-top:6px">Ce rappel revient tous les 2 jours tant que la date n'est pas mise à jour.</p>` });
 }
 
+/* ---------- PARAMÈTRES (notifications, compte, réglages des chefs) ---------- */
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const standalone = () => (window.matchMedia && matchMedia("(display-mode: standalone)").matches) || navigator.standalone === true;
+function u8(b64) { const s = atob(String(b64).replace(/-/g, "+").replace(/_/g, "/") + "===".slice((String(b64).length + 3) % 4)); return Uint8Array.from(s, c => c.charCodeAt(0)); }
+async function pushEtat() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) return isIOS() && !standalone() ? "ios-ecran" : "nonsupporte";
+  if (isIOS() && !standalone()) return "ios-ecran";
+  if (Notification.permission === "denied") return "refuse";
+  try { const reg = await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); return sub ? "actif" : "inactif"; } catch (e) { return "inactif"; }
+}
+function viewParametres() {
+  const r = ROLE === "chef" ? "Chef" : "Équipier";
+  return header("Paramètres", "Réglages de l'appli") + `<main>
+    <div class="sect"><h3>🔔 Notifications sur ce téléphone</h3><div id="push-box"><p class="muted">Chargement…</p></div></div>
+    <div class="sect"><h3>👤 Mon compte</h3><p class="mq" style="margin:0"><b>${esc(myName() || "Sans prénom")}</b> · <span class="role ${ROLE === "chef" ? "chef" : "eq"}">${r}</span></p>
+      <p class="muted" style="margin:4px 0 10px">${esc((USER && USER.email) || "")}</p><button class="btn light" data-act="logout">Se déconnecter</button></div>
+    ${isChef() ? `<div class="sect"><h3>🛡️ Réglages des chefs</h3><p class="muted" style="margin:0 0 8px">Visible seulement par Cyril et Nico.</p>
+      <a class="setrow" href="#/activite"><span>📋</span><b>Activité et annulations</b><small>Qui a fait quoi, annuler une modif</small>${SVG.chev}</a>
+      <a class="setrow" href="#/acces"><span>👥</span><b>Accès à l'appli</b><small>Les comptes, couper ou rendre un accès, lever une pause</small>${SVG.chev}</a></div>` : ""}
+  </main>`;
+}
+async function loadParams() {
+  const box = $("#push-box"); if (!box) return;
+  const st = await pushEtat(), b = $("#push-box"); if (!b) return;
+  const T = {
+    actif: `<p class="mq">✅ <b>Activées</b> sur ce téléphone.</p><p class="muted">Tu reçois les rappels des véhicules vers 6 h (et à midi si c'est urgent).</p><button class="btn light" data-act="push-off">Désactiver sur ce téléphone</button>`,
+    inactif: `<p class="mq">Reçois les rappels des véhicules (CT, pollution, révision) même quand l'appli est fermée : vers 6 h, et aussi à midi quand c'est urgent.</p><button class="btn" data-act="push-on">🔔 Recevoir les alertes sur ce téléphone</button>`,
+    refuse: `<p class="mq">⛔ Les notifications sont <b>bloquées</b> pour l'appli sur ce téléphone.</p><p class="muted">Pour les débloquer : réglages du téléphone → Notifications → ${isIOS() ? "ASDJ - Tools" : "Chrome → cyril77169.github.io"} → Autoriser. Puis reviens ici.</p>`,
+    "ios-ecran": `<p class="mq">Sur iPhone, il faut d'abord <b>ajouter l'appli à l'écran d'accueil</b> : dans Safari, bouton Partager → « Sur l'écran d'accueil » → Ajouter.</p><p class="muted">Ensuite, ouvre l'appli avec la nouvelle icône et reviens ici.</p>`,
+    nonsupporte: `<p class="muted">Ce téléphone ou ce navigateur ne sait pas recevoir de notifications. Sur Android, utilise Chrome ; sur iPhone, l'icône de l'écran d'accueil.</p>`,
+  };
+  b.innerHTML = T[st] || T.nonsupporte;
+}
+async function pushOn(btn) {
+  const msg = t => { const b = $("#push-box"); if (b) b.insertAdjacentHTML("beforeend", `<div class="msg err" style="margin-top:8px">${t}</div>`); };
+  if (!navigator.onLine) return msg("Il faut du réseau pour activer les notifications.");
+  btn.disabled = true; btn.textContent = "Activation…";
+  try {
+    const { data: pub } = await supa.rpc("push_cle_publique");
+    if (!pub) { btn.disabled = false; btn.textContent = "🔔 Recevoir les alertes sur ce téléphone"; return msg("Les notifications ne sont pas encore installées. Réessaie un peu plus tard."); }
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") { loadParams(); return; }
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: u8(pub) });
+    const j = sub.toJSON();
+    const { error } = await supa.from("push_abonnements").insert({ endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth, appareil: isIOS() ? "iPhone" : (/android/i.test(navigator.userAgent) ? "Android" : "Autre") });
+    if (error && error.code !== "23505") { await sub.unsubscribe().catch(() => {}); throw error; }
+    loadParams();
+  } catch (e) { btn.disabled = false; btn.textContent = "🔔 Recevoir les alertes sur ce téléphone"; msg(`Ça n'a pas marché (${esc(e && e.message || e)}). Réessaie.`); }
+}
+async function pushOff(btn) {
+  btn.disabled = true;
+  try {
+    const reg = await navigator.serviceWorker.ready, sub = await reg.pushManager.getSubscription();
+    if (sub) { if (navigator.onLine) await supa.from("push_abonnements").delete().eq("endpoint", sub.endpoint); await sub.unsubscribe(); }
+  } catch (e) {}
+  loadParams();
+}
+
 /* rendu principal (garde la position de défilement de chaque écran) */
 let pendingRender = false, focusSearch = false;
 function render(nav) {
@@ -1257,6 +1328,7 @@ function render(nav) {
   else if (a === "ajouter") html = b === "vehicule" ? viewAjoutV() : viewAjout(b);
   else if (a === "activite") html = viewActivite();
   else if (a === "acces") html = viewAcces();
+  else if (a === "parametres") html = viewParametres();
   else html = viewHome();
   const y = nav ? (scrolls[r.key] || 0) : window.scrollY;
   $("#app").innerHTML = html;
@@ -1264,6 +1336,7 @@ function render(nav) {
   if (a === "machine") { loadHist(b); showPhotos(); }
   if (a === "activite" && isChef() && (nav || ACT.key !== actFilter().key)) loadActivite(true);
   if (a === "acces" && isChef() && nav) loadAcces();
+  if (a === "parametres") loadParams();
   if (a === "equipe") showPhotos();
   if (a === "tout" && focusSearch) { focusSearch = false; const s = $("#search"); if (s) { s.focus(); const n = s.value.length; try { s.setSelectionRange(n, n); } catch (_) {} } }
   pendingRender = false;
@@ -1376,6 +1449,8 @@ document.addEventListener("click", async e => {
   if (act === "acc") { closePops(); if (isChef()) askAcces(t.dataset.uid, t.dataset.a); return; }
   if (act === "go") return go(t.dataset.h);
   if (act === "go-r") return replaceTo(t.dataset.h);
+  if (act === "push-on") return pushOn(t);
+  if (act === "push-off") return pushOff(t);
   if (act === "pbt") { t.parentNode.querySelectorAll("button").forEach(b => b.classList.toggle("on", b === t)); const mm = $("#m-msg"); if (mm) mm.innerHTML = ""; return; }
   if (act === "act-f") { replaceTo(t.dataset.h); return; }
   if (act === "act-more") { t.disabled = true; t.textContent = "Chargement…"; loadActivite(false); return; }
@@ -1434,7 +1509,7 @@ document.addEventListener("click", async e => {
   if (act === "statut" && id) return isVeh(S.machines[id]) ? askStatutV(id, t.dataset.v) : askStatut(id, t.dataset.v);
   if (act === "ech" && id) return askEch(id, t.dataset.k, t.dataset.d);
   if (act === "rev-report" && id) return askRevReport(id);
-  if (act === "rev-choix") { const vid = t.dataset.id, c = t.dataset.c; closeModal(true); setTimeout(() => askRevChoix(vid, c), 0); return; }
+  if (act === "rev-choix") { const vid = t.dataset.id, c = t.dataset.c, k = t.dataset.k || "rev"; closeModal(true); setTimeout(() => askRevChoix(vid, c, k), 0); return; }
   if (act === "km" && id) return askKm(id);
   if (act === "pret" && id) return askPret(id);
   if (act === "lieu" && id) { draftSet(id, "lieu", t.dataset.v); render(false); return; }
@@ -1535,7 +1610,7 @@ function draftSet(id, fld, v) {
 function fieldValue(el) {
   const fld = el.dataset.field; let v = el.value;
   if (fld === "equipe") return v === "" ? null : +v;
-  if (["depuis", "controle", "depose_le", "recupere_le", "pret_le", "km_le", "ct_le", "pol_le", "rev_le", "ct_avant", "pol_avant", "rev_avant", "mise_circulation"].includes(fld)) return v || null;
+  if (["depuis", "controle", "depose_le", "recupere_le", "pret_le", "km_le", "ct_le", "pol_le", "rev_le", "ct_avant", "pol_avant", "rev_avant", "mise_circulation", "rev_rdv", "ct_rdv", "pol_rdv"].includes(fld)) return v || null;
   if (["km", "rev_km", "ct_mois", "pol_mois", "rev_mois", "rev_cible_km"].includes(fld)) return v === "" ? null : +v;
   if (fld === "plaque") return fmtPlaque(v);
   return v.trim();

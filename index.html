@@ -267,6 +267,8 @@ body.noscroll{overflow:hidden}
 .chips2 button{border:2px solid #dfe7df;background:#fff;border-radius:999px;padding:7px 12px;font-weight:700;font-size:14px;cursor:pointer;font-family:inherit;color:inherit}
 .chips2 button.on{background:#d32f2f;border-color:#d32f2f;color:#fff}
 .hero .id{margin-top:2px}
+.setrow{display:grid;grid-template-columns:28px 1fr 18px;grid-template-rows:auto auto;column-gap:10px;align-items:center;padding:12px 0;border-top:1px solid var(--line);color:inherit;text-decoration:none}
+.setrow span{grid-row:1/3;font-size:20px}.setrow b{font-size:15px}.setrow small{grid-column:2;color:var(--muted);font-size:13px}.setrow svg{grid-row:1/3;grid-column:3;width:16px;height:16px;color:#9aa}
 .choix3{display:grid;gap:8px;margin-top:6px}.choix3 .btn{text-align:left;padding:12px}
 .vsumm .sum span{white-space:normal;line-height:1.15}
 /* barre « enregistrer » */
@@ -331,8 +333,8 @@ label.check input{width:22px;height:22px;accent-color:var(--green-dark)}
 <div id="app"></div>
 <div id="status" class="hidden"><i></i><span id="status-txt">…</span><span class="sp"></span></div>
 <script src="vendor/supabase.js"></script>
-<script src="config.js?v=11"></script>
-<script src="app.js?v=11"></script>
-<script>if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js?v=11");</script>
+<script src="config.js?v=12"></script>
+<script src="app.js?v=12"></script>
+<script>if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js?v=12");</script>
 </body>
 </html>
