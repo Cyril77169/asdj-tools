@@ -1,7 +1,7 @@
 /* ASDJ - Tools : suivi du matériel par famille et par équipe.
    Données partagées entre les comptes connectés (Supabase), copie locale + file d'attente pour le hors ligne. */
 "use strict";
-const APP_V = 16;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
+const APP_V = 17;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
 const CFG = window.APP_CONFIG;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1007,7 +1007,7 @@ function alertBandHTML(detail) {
   const a = alertes(); if (!a.length) return "";
   const nv = new Set(a.map(x => x.m.id)).size;
   const txt = a.slice(0, 2).map(x => `${x.k === "ct" ? "CT" : x.k === "pol" ? "pollution" : "révision"} de ${esc(disp(x.m))} ${x.niveau === "late" ? "dépassé" : `dans ${x.jours} j`}`).join(" · ");
-  return `<a class="alertband" href="#/vehicules"><span class="ab-ic">⚠️</span><div><b>${detail ? `${a.length} rendez-vous à prendre` : `${nv} véhicule${nv > 1 ? "s" : ""} : rendez-vous à prendre`}</b><br>${detail ? "Touche un véhicule pour voir le détail" : txt}${!detail && a.length > 2 ? "…" : ""}</div></a>`;
+  return `<a class="alertband" href="#/vehicules"><span class="ab-ic">⚠️</span><div><b>${a.length} rendez-vous à prendre</b> <span class="ab-nv">sur ${nv} véhicule${nv > 1 ? "s" : ""}</span><br>${detail ? "Touche un véhicule pour voir le détail" : txt}${!detail && a.length > 2 ? "…" : ""}</div></a>`;
 }
 function vcardHTML(m) {
   const ech = echeances(m), st = VST[m.statut] ? m.statut : "operationnelle", court = x => x.k === "ct" ? "CT" : x.k === "pol" ? "pollution" : "révision";
