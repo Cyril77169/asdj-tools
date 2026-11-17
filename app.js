@@ -1,7 +1,7 @@
 /* ASDJ - Tools : suivi du matériel par famille et par équipe.
    Données partagées entre les comptes connectés (Supabase), copie locale + file d'attente pour le hors ligne. */
 "use strict";
-const APP_V = 10;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
+const APP_V = 11;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
 const CFG = window.APP_CONFIG;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -60,6 +60,14 @@ const isoOf = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0
 function echeances(m) {
   const now = new Date(); now.setHours(0, 0, 0, 0);
   return ECH.filter(e => +m[e.mois] > 0).map(e => {
+    if (e.k === "rev" && m.rev_mode === "km" && +m.rev_cible_km > 0) {          // révision : on attend un kilométrage
+      const reste = +m.rev_cible_km - (+m.km || 0);
+      return Object.assign({}, e, { mode: "km", reste, due: `km${m.rev_cible_km}`, jours: reste <= 0 ? -1 : reste <= 1000 ? 1 : 999, niveau: reste <= 0 ? "late" : reste <= 1000 ? "warn" : "ok" });
+    }
+    if (e.k === "rev" && m.rev_mode === "rdv" && m.rev_rdv) {                  // révision : rendez-vous pris
+      const [ry, rm, rd] = String(m.rev_rdv).slice(0, 10).split("-").map(Number), j = Math.round((new Date(ry, rm - 1, rd) - now) / 864e5);
+      return Object.assign({}, e, { mode: "rdv", due: `rdv${m.rev_rdv}`, jours: j <= 0 ? 0 : 999, niveau: j <= 0 ? "warn" : "ok", rdvj: j, rdv: String(m.rev_rdv).slice(0, 10) });
+    }
     const av = m[`${e.k}_avant`]; let due = null;
     if (av) due = String(av).slice(0, 10);                                     // date « avant le » (carte grise)
     else if (e.k === "pol") {                                                   // pollution : 1 an après le dernier CT
@@ -72,7 +80,8 @@ function echeances(m) {
     return Object.assign({}, e, { due, avant: !!av, jours, niveau: jours < 0 ? "late" : jours <= 14 ? "warn" : "ok" });
   });
 }
-const echTxt = x => x.niveau === "apres" ? "après le prochain CT" : x.niveau === "vide" ? "date à remplir" : x.niveau === "late" ? `dépassé de ${-x.jours} j` : x.jours === 0 ? "aujourd'hui" : x.niveau === "warn" ? `dans ${x.jours} jour${x.jours > 1 ? "s" : ""}` : "à jour";
+const kmf = n => `${Number(n).toLocaleString("fr-FR")} km`;
+const echTxt = x => x.mode === "km" ? (x.reste > 0 ? `dans ${kmf(x.reste)}` : `dépassé de ${kmf(-x.reste)}`) : x.mode === "rdv" ? (x.rdvj > 0 ? `RDV le ${frDate(x.rdv)}` : "RDV passé : faite ?") : x.niveau === "apres" ? "après le prochain CT" : x.niveau === "vide" ? "date à remplir" : x.niveau === "late" ? `dépassé de ${-x.jours} j` : x.jours === 0 ? "aujourd'hui" : x.niveau === "warn" ? `dans ${x.jours} jour${x.jours > 1 ? "s" : ""}` : "à jour";
 function alertes() { const out = []; vehicules().forEach(m => echeances(m).forEach(x => { if (x.niveau === "warn" || x.niveau === "late") out.push(Object.assign({ m }, x)); })); return out.sort((a, b) => a.jours - b.jours); }
 const vprio = m => { const a = echeances(m); return (VPRIO[m.statut] ?? 9) * 10 + (a.some(x => x.niveau === "late") ? 0 : a.some(x => x.niveau === "warn") ? 1 : 5); };
 const sc = id => `var(--s-${id})`;
@@ -587,6 +596,8 @@ const EVT = {
   pol: { nom: "Contrôle pollution fait", c: "operationnelle" },
   rev: { nom: "Révision / vidange faite", c: "operationnelle" },
   revision: { nom: "En attente de révision", c: "revision" },
+  rev_attente: { nom: "Révision : attendre un kilométrage", c: "revision" },
+  rev_rdv: { nom: "Révision : rendez-vous pris", c: "revision" },
 };
 function evLines(e) {
   const lines = [];
@@ -630,6 +641,8 @@ function eventsHTML(id) {
       const lines = [];
       if (e.equipe != null && e.type !== "retour") lines.push(`Équipe : ${teamLabel(e.equipe)}`);
       if (e.probleme_type) lines.push(`Genre : ${e.probleme_type}`);
+      if (e.cible_km) lines.push(`Révision prévue à ${Number(e.cible_km).toLocaleString("fr-FR")} km${e.km ? ` (compteur : ${Number(e.km).toLocaleString("fr-FR")} km)` : ""}`);
+      if (e.rdv) lines.push(`Rendez-vous le ${frDate(e.rdv)}${e.garage ? ` · ${e.garage}` : ""}`);
       if (e.fait_le) lines.push(`Fait le ${frDate(e.fait_le)}${e.km ? ` à ${Number(e.km).toLocaleString("fr-FR")} km` : ""}`);
       if (e.motif) lines.push(`Pourquoi : ${e.motif}`);
       if (e.reparateur) lines.push(`${isVeh(S.machines[id]) ? "Garage" : "Réparateur"} : ${e.reparateur}`);
@@ -698,12 +711,14 @@ function viewMachine(id) {
   </main>
   <div class="savebar ${dirty ? "" : "hidden"}" id="savebar"><span>Modifications non enregistrées</span><button class="btn light" data-act="draft-cancel">Annuler</button><button class="btn" data-act="draft-save">💾 Enregistrer</button></div>`;
 }
-const CHAMPS = { ct_avant: "Prochain CT avant le", pol_avant: "Pollution avant le", rev_avant: "Révision avant le", mise_circulation: "Mise en circulation", plaque: "Plaque", type_vehicule: "Type de véhicule", km: "Kilométrage", km_le: "Kilométrage relevé le", ct_le: "Contrôle technique fait le", ct_mois: "Délai du CT", pol_le: "Contrôle pollution fait le", pol_mois: "Délai pollution", rev_le: "Révision faite le", rev_km: "Km à la révision", rev_mois: "Délai révision", probleme_type: "Genre de problème", creation: "Ajout", _num: "Numéro", numero: "Numéro", pret_a: "Prêtée à", pret_le: "Prêtée le", depose_par: "Déposée par", depose_le: "Déposée le", recupere_par: "Récupérée par", recupere_le: "Récupérée le", photo: "Photo", statut: "État", lieu: "Lieu", reparateur: "Réparateur", depuis: "Depuis", motif: "Pourquoi", equipe: "Équipe", controle: "Contrôle", modele: "Modèle", notes: "Notes", actif: "Dans le parc", affectation: "Affectation", famille: "Type" };
+const CHAMPS = { rev_mode: "Choix pour la révision", rev_cible_km: "Révision prévue à (km)", rev_rdv: "Rendez-vous révision", rev_garage: "Garage révision", rev_choix: "Choix fait par", ct_avant: "Prochain CT avant le", pol_avant: "Pollution avant le", rev_avant: "Révision avant le", mise_circulation: "Mise en circulation", plaque: "Plaque", type_vehicule: "Type de véhicule", km: "Kilométrage", km_le: "Kilométrage relevé le", ct_le: "Contrôle technique fait le", ct_mois: "Délai du CT", pol_le: "Contrôle pollution fait le", pol_mois: "Délai pollution", rev_le: "Révision faite le", rev_km: "Km à la révision", rev_mois: "Délai révision", probleme_type: "Genre de problème", creation: "Ajout", _num: "Numéro", numero: "Numéro", pret_a: "Prêtée à", pret_le: "Prêtée le", depose_par: "Déposée par", depose_le: "Déposée le", recupere_par: "Récupérée par", recupere_le: "Récupérée le", photo: "Photo", statut: "État", lieu: "Lieu", reparateur: "Réparateur", depuis: "Depuis", motif: "Pourquoi", equipe: "Équipe", controle: "Contrôle", modele: "Modèle", notes: "Notes", actif: "Dans le parc", affectation: "Affectation", famille: "Type" };
 function histVal(c, v, veh) {
   if (v == null || v === "") return "—";
   if (c === "statut") return veh ? (VST[v] ? VST[v].nom : v) : ST[v] ? ST[v].nom : (VST[v] ? VST[v].nom : v);
   if (["km_le", "ct_le", "pol_le", "rev_le", "ct_avant", "pol_avant", "rev_avant", "mise_circulation"].includes(c)) return frDate(v);
-  if (["km", "rev_km"].includes(c)) return `${Number(v).toLocaleString("fr-FR")} km`;
+  if (c === "rev_mode") return v === "km" ? "attendre un kilométrage" : v === "rdv" ? "rendez-vous" : v;
+  if (c === "rev_rdv") return frDate(v);
+  if (["km", "rev_km", "rev_cible_km"].includes(c)) return `${Number(v).toLocaleString("fr-FR")} km`;
   if (["ct_mois", "pol_mois", "rev_mois"].includes(c)) return DELAIS[v] || `${v} mois`;
   if (c === "type_vehicule") return VTYPES[v] || v;
   if (c === "lieu") return LIEUX[v] || v;
@@ -969,11 +984,15 @@ function viewVehicule(m) {
   const otherDraft = DRAFT && DRAFT.id !== id && Object.keys(DRAFT.v).length && S.machines[DRAFT.id];
   const ech = echeances(m);
   const fait = x => m[x.le] ? `<p>${x.k === "rev" ? "Faite" : "Fait"} le ${frDate(m[x.le])}${x.k === "rev" && m.rev_km ? ` à ${Number(m.rev_km).toLocaleString("fr-FR")} km` : ""}</p>` : "";
+  const choix = m.rev_choix ? `<p class="muted">Choix de ${esc(m.rev_choix)}.</p>` : "";
+  const report = x => x.k === "rev" && (x.niveau === "warn" || x.niveau === "late" || x.mode) ? `<button class="btn light" style="margin-top:8px" data-act="rev-report">⏳ Pas tout de suite : rendez-vous ou kilométrage</button>` : "";
   const echRow = x => `<div class="echrow ${["ok", "apres"].includes(x.niveau) ? "" : x.niveau}"><h4>${esc(x.nom)} <span class="due ${x.niveau === "apres" ? "ok" : x.niveau}">${esc(echTxt(x))}</span></h4>
-      ${x.niveau === "vide" ? `<p>Pas encore de date : indique quand ${x.k === "rev" ? "la dernière a été faite" : "le dernier a été fait"}.</p>`
+      ${x.mode === "km" ? `${fait(x)}<p>Prévue à <b>${kmf(m.rev_cible_km)}</b> · compteur : ${m.km ? kmf(m.km) : "?"}${m.km_le ? ` (relevé le ${frDate(m.km_le)})` : ""}</p>${choix}`
+        : x.mode === "rdv" ? `${fait(x)}<p>Rendez-vous le <b>${frDate(m.rev_rdv)}</b>${m.rev_garage ? ` · ${esc(m.rev_garage)}` : ""}</p>${x.rdvj <= 0 ? `<p><b>Le rendez-vous est passé : la révision a-t-elle été faite ?</b></p>` : ""}${choix}`
+        : x.niveau === "vide" ? `<p>Pas encore de date : indique quand ${x.k === "rev" ? "la dernière a été faite" : "le dernier a été fait"}.</p>`
         : x.niveau === "apres" ? `${fait(x)}<p>${m.pol_le ? "Déjà fait depuis le dernier contrôle technique : le prochain se fera après le CT." : "À faire 1 an après le premier contrôle technique."}</p>`
         : `${fait(x)}<p>${x.k === "rev" ? "Prochaine" : "Prochain"} avant le <b>${frDate(x.due)}</b>${x.avant ? " <span class='muted'>(date notée)</span>" : ` · délai ${esc(DELAIS[m[x.mois]] || `${m[x.mois]} mois`)}`}</p>`}
-      <div class="row2"><button class="btn light" data-act="ech" data-k="${x.k}" data-d="auj">✅ ${x.k === "rev" ? "Faite" : "Fait"} aujourd'hui</button><button class="btn light" data-act="ech" data-k="${x.k}" data-d="autre">📅 Autre date</button></div></div>`;
+      <div class="row2"><button class="btn light" data-act="ech" data-k="${x.k}" data-d="auj">✅ ${x.k === "rev" ? "Faite" : "Fait"} aujourd'hui</button><button class="btn light" data-act="ech" data-k="${x.k}" data-d="autre">📅 Autre date</button></div>${report(x)}</div>`;
   return header(disp(m), m.plaque ? m.modele : "Véhicule", { fam: "vehicule" }) + `<main>
     ${otherDraft ? `<a class="draftwarn" href="#/machine/${encodeURIComponent(DRAFT.id)}">⚠️ Corrections non enregistrées sur <b>${esc(disp(otherDraft))}</b> : touche ici pour les valider.</a>` : ""}
     <div class="hero" style="--c:${vsc(st)}"><span class="fam">${VAN}</span>
@@ -1084,16 +1103,18 @@ function askEch(id, k, quand) {
   openModal({ title: `${esc(e.nom)} ${e.f} ?`, center: true, ok: "Oui, enregistrer",
     html: `<p class="mq">Es-tu sûr que ${k === "rev" ? "la révision / vidange" : `le ${e.nom.toLowerCase()}`} de <b>${esc(disp(m))}</b> a été ${e.f} ?</p>
       <label class="f" for="m-ed">Date</label><input class="inp" id="m-ed" type="date" value="${quand === "auj" ? today() : (m[e.le] || today())}" max="${today()}">
-      <label class="f" for="m-ekm">Kilométrage <span class="muted">(facultatif)</span></label><input class="inp" id="m-ekm" type="number" inputmode="numeric" min="0" placeholder="${m.km ? `dernier relevé : ${Number(m.km).toLocaleString("fr-FR")}` : "ex. 156500"}">
+      <label class="f" for="m-ekm">Kilométrage ${k === "rev" ? "" : `<span class="muted">(facultatif)</span>`}</label><input class="inp" id="m-ekm" type="number" inputmode="numeric" min="0" placeholder="${m.km ? `dernier relevé : ${Number(m.km).toLocaleString("fr-FR")}` : "ex. 156500"}">
       <p class="muted" id="m-enext"></p>`,
     onOpen: d => { const upd = () => { const x = d.querySelector("#m-ed").value; d.querySelector("#m-enext").textContent = k === "pol" ? "Le prochain se fera avec le prochain contrôle technique." : x && +m[e.mois] ? `Prochain rappel : 2 semaines avant le ${frDate(isoOf(addMonths(x, +m[e.mois])))}.` : ""; }; d.querySelector("#m-ed").addEventListener("input", upd); upd(); if (quand !== "auj") setTimeout(() => d.querySelector("#m-ed").focus(), 50); },
     onOk: () => {
       const d = mval("m-ed"), km = mval("m-ekm");
       if (!d) { $("#m-msg").innerHTML = `<div class="msg err">Indique la date.</div>`; return false; }
       if (d > today()) { $("#m-msg").innerHTML = `<div class="msg err">La date ne peut pas être dans le futur.</div>`; return false; }
+      if (k === "rev" && !km) { $("#m-msg").innerHTML = `<div class="msg err">Indique le kilométrage de la révision (il sert à calculer la prochaine).</div>`; return false; }
       if (km && !/^\d+$/.test(km)) { $("#m-msg").innerHTML = `<div class="msg err">Le kilométrage doit être un nombre.</div>`; return false; }
       const ch = { [e.le]: d };
       if (m[`${k}_avant`]) ch[`${k}_avant`] = null;
+      if (k === "rev") { if (m.rev_mode) ch.rev_mode = ""; if (m.rev_cible_km) ch.rev_cible_km = null; if (m.rev_rdv) ch.rev_rdv = null; if (m.rev_garage) ch.rev_garage = ""; if (m.rev_choix) ch.rev_choix = ""; }
       if (k === "ct" && m.pol_avant) ch.pol_avant = null;      // nouveau CT : la pollution repart d'un an après
       if (km) { if (k === "rev") ch.rev_km = +km; if (!m.km_le || d >= m.km_le) { ch.km = +km; ch.km_le = d; } }
       if (k === "rev" && m.statut === "revision") { ch.statut = "operationnelle"; ch.depuis = today(); ch.motif = ""; }
@@ -1114,17 +1135,105 @@ function askKm(id) {
       setFields(id, { km: +v, km_le: today() }); return true;
     } });
 }
+/* une ligne du pop-up d'alerte (la révision propose des choix) */
+function popRow(x) {
+  const m = x.m, lien = `href="#/machine/${encodeURIComponent(m.id)}" data-act="m-cancel" style="color:inherit;text-decoration:none"`;
+  const det = x.mode === "km" ? `Prévue à <b>${kmf(m.rev_cible_km)}</b> · compteur : ${m.km ? kmf(m.km) : "?"}${m.km_le ? ` (relevé le ${frDate(m.km_le)})` : ""}`
+    : x.mode === "rdv" ? `Le rendez-vous était le <b>${frDate(m.rev_rdv)}</b>. La révision a-t-elle été faite ?`
+    : `${m[x.le] ? `${x.k === "rev" ? "Faite" : "Fait"} le ${frDate(m[x.le])}${x.k === "rev" && m.rev_km ? ` à ${kmf(m.rev_km)}` : ""} · ` : ""}à refaire avant le <b>${frDate(x.due)}</b>`;
+  const btns = x.k === "rev" ? `<p style="margin-top:8px"><b>Que veux-tu faire ?</b></p><div class="choix3">
+      <button class="btn light" data-act="rev-choix" data-c="rdv" data-id="${esc(m.id)}">📅 La faire dès que possible (noter la date du RDV)</button>
+      <button class="btn light" data-act="rev-choix" data-c="km" data-id="${esc(m.id)}">🛣️ Attendre un kilométrage</button>
+      <button class="btn light" data-act="rev-choix" data-c="fait" data-id="${esc(m.id)}">✅ Elle est déjà faite</button></div>` : "";
+  return `<div class="echrow ${x.niveau}" style="margin-bottom:8px"><a ${lien}><h4>${esc(x.nom)} <span class="due ${x.niveau}">${esc(echTxt(x))}</span></h4>
+    <p>${plaqueHTML(m)} ${esc(m.modele || "")}</p><p>${det}</p></a>${btns}</div>`;
+}
+/* kilométrage conseillé pour la prochaine révision : moyenne du véhicule */
+function kmConseil(m, kmNow) {
+  const days = (a, b) => (Date.parse(b) - Date.parse(a)) / 864e5;
+  let parAn = 0, base = "";
+  if (m.rev_km && m.rev_le && kmNow > +m.rev_km && days(m.rev_le, today()) > 60) { parAn = (kmNow - m.rev_km) / days(m.rev_le, today()) * 365; base = `${kmf(kmNow - m.rev_km)} depuis la dernière révision`; }
+  else if (m.mise_circulation && kmNow && days(m.mise_circulation, today()) > 180) { parAn = kmNow / days(m.mise_circulation, today()) * 365; base = `${kmf(kmNow)} depuis ${String(m.mise_circulation).slice(0, 4)}`; }
+  if (!parAn) { parAn = 15000; base = "moyenne habituelle d'un utilitaire"; }
+  parAn = Math.round(parAn / 100) * 100;
+  const depart = +m.rev_km || kmNow || 0;
+  let cible = Math.ceil((depart + parAn) / 1000) * 1000;
+  if (kmNow && cible < kmNow + 1000) cible = Math.ceil((kmNow + 1000) / 1000) * 1000;
+  return { parAn, base, cible, depart };
+}
+function askRevReport(id) {
+  openModal({ title: "Révision : pas tout de suite", center: true, cancel: null, ok: "Fermer",
+    html: `<p class="mq">Que veux-tu faire pour la révision de <b>${esc(disp(S.machines[id]))}</b> ?</p><div class="choix3">
+      <button class="btn light" data-act="rev-choix" data-c="rdv" data-id="${esc(id)}">📅 La faire dès que possible (noter la date du RDV)</button>
+      <button class="btn light" data-act="rev-choix" data-c="km" data-id="${esc(id)}">🛣️ Attendre un kilométrage</button></div>` });
+}
+function askRevChoix(id, c) {
+  const m = S.machines[id]; if (!m) return;
+  if (c === "fait") return askEch(id, "rev", "auj");
+  const qui = `${myName() || "?"} le ${frDate(today())}`;
+  if (c === "rdv") return openModal({ title: "Révision dès que possible", center: true, ok: "Oui, enregistrer",
+    html: `<p class="mq">Révision de <b>${esc(disp(m))}</b> : quand est le rendez-vous ?</p>
+      <label class="f" for="m-rdv">Date du rendez-vous</label><input class="inp" id="m-rdv" type="date" min="${today()}" value="${m.rev_rdv && m.rev_rdv >= today() ? m.rev_rdv : ""}">
+      <label class="f" for="m-rg">Garage <span class="muted">(facultatif)</span></label><input class="inp" id="m-rg" value="${esc(m.rev_garage || "")}" placeholder="Nom du garage">
+      <p class="muted">Plus d'alerte jusqu'au rendez-vous. Le jour J, l'appli demandera si la révision a bien été faite.</p>`,
+    onOk: () => {
+      const d = mval("m-rdv"), g = mval("m-rg");
+      if (!d) { $("#m-msg").innerHTML = `<div class="msg err">Indique la date du rendez-vous.</div>`; return false; }
+      if (d < today()) { $("#m-msg").innerHTML = `<div class="msg err">La date du rendez-vous est déjà passée.</div>`; return false; }
+      addEvent(id, "rev_rdv", { rdv: d, garage: g });
+      setFields(id, { rev_mode: "rdv", rev_rdv: d, rev_garage: g, rev_cible_km: null, rev_choix: qui }); return true;
+    } });
+  if (c === "km") return openModal({ title: "Attendre un kilométrage", center: true, ok: "Oui, enregistrer",
+    html: `<p class="mq">Révision de <b>${esc(disp(m))}</b> : on attend un kilométrage.</p>
+      <label class="f" for="m-kmnow">Kilométrage actuel du compteur</label><input class="inp" id="m-kmnow" type="number" inputmode="numeric" min="0" placeholder="ex. 151300">
+      <p class="muted" style="margin:6px 0 0">${m.km ? `Dernier relevé : ${kmf(m.km)}${m.km_le ? ` le ${frDate(m.km_le)}` : ""}.` : "Pas encore de relevé."}</p>
+      <label class="f" for="m-cible">Faire la révision à (km)</label><input class="inp" id="m-cible" type="number" inputmode="numeric" min="0">
+      <div class="box2" id="m-calc" style="font-size:14px"></div>
+      <p class="muted">L'alerte revient quand le compteur approche de ce kilométrage (à 1 000 km près). L'appli demande de relever le compteur une fois par mois.</p>`,
+    onOpen: d => {
+      const now = d.querySelector("#m-kmnow"), cib = d.querySelector("#m-cible"), calc = d.querySelector("#m-calc"); let touched = false;
+      const upd = () => { const k = +now.value || +m.km || 0, c2 = kmConseil(m, k);
+        calc.innerHTML = `💡 Calcul : ce véhicule roule environ <b>${kmf(c2.parAn)} par an</b> (${esc(c2.base)}).${c2.depart ? ` Révision faite à ${kmf(c2.depart)} →` : ""} la prochaine vers <b>${kmf(c2.cible)}</b>.`;
+        if (!touched) cib.value = c2.cible; };
+      now.addEventListener("input", upd); cib.addEventListener("input", () => touched = true); upd(); setTimeout(() => now.focus(), 50);
+    },
+    onOk: () => {
+      const kn = mval("m-kmnow"), ci = mval("m-cible");
+      if (!/^\d+$/.test(kn)) { $("#m-msg").innerHTML = `<div class="msg err">Écris le kilométrage actuel du compteur, en chiffres.</div>`; return false; }
+      if (m.km && +kn < +m.km && !MODAL.el.__okBas) { MODAL.el.__okBas = true; $("#m-msg").innerHTML = `<div class="msg err">C'est moins que le dernier relevé (${kmf(m.km)}). Si c'est bien ça, appuie encore une fois sur « Oui, enregistrer ».</div>`; return false; }
+      if (!/^\d+$/.test(ci) || +ci <= +kn) { $("#m-msg").innerHTML = `<div class="msg err">Le kilométrage de la révision doit être plus grand que le compteur actuel.</div>`; return false; }
+      addEvent(id, "rev_attente", { cible_km: +ci, km: +kn });
+      setFields(id, { km: +kn, km_le: today(), rev_mode: "km", rev_cible_km: +ci, rev_rdv: null, rev_garage: "", rev_choix: qui }); return true;
+    } });
+}
+/* relevé du compteur une fois par mois (véhicules qui attendent un kilométrage) */
+function maybeKmPopup() {
+  if (!USER || MODAL || ROLE === "coupe") return;
+  const key = `asdj_kmask_${USER.id}`; let vu = {}; try { vu = JSON.parse(localStorage.getItem(key) || "{}"); } catch (e) {}
+  const now = Date.now();
+  const m = vehicules().find(v => v.rev_mode === "km" && (!v.km_le || (Date.parse(today()) - Date.parse(v.km_le)) / 864e5 > 30) && (!vu[v.id] || now - vu[v.id] > 48 * 3600e3));
+  if (!m) return;
+  vu[m.id] = now; try { localStorage.setItem(key, JSON.stringify(vu)); } catch (e) {}
+  openModal({ title: "📟 Relevé du compteur", center: true, ok: "Enregistrer", cancel: "Plus tard",
+    html: `<p class="mq">Le dernier relevé de <b>${esc(disp(m))}</b> date de plus d'un mois. Combien affiche le compteur ?</p><input class="inp" id="m-km" type="number" inputmode="numeric" min="0" placeholder="${m.km ? `dernier : ${Number(m.km).toLocaleString("fr-FR")}` : "ex. 152400"}">
+      <p class="muted">Ça sert à savoir quand faire la révision (prévue à ${kmf(m.rev_cible_km)}).</p>`,
+    onOk: () => {
+      const v = mval("m-km");
+      if (!/^\d+$/.test(v)) { $("#m-msg").innerHTML = `<div class="msg err">Écris le kilométrage en chiffres.</div>`; return false; }
+      if (m.km && +v < +m.km && !MODAL.el.__okBas) { MODAL.el.__okBas = true; $("#m-msg").innerHTML = `<div class="msg err">C'est moins que le dernier relevé (${kmf(m.km)}). Si c'est bien ça, appuie encore une fois sur « Enregistrer ».</div>`; return false; }
+      setFields(m.id, { km: +v, km_le: today() }); return true;
+    } });
+}
 /* pop-up des rendez-vous à prendre : à l'ouverture, puis tous les 2 jours tant que ce n'est pas fait */
 function maybeAlertPopup() {
   if (!USER || MODAL || ROLE === "coupe") return;
-  const a = alertes(); if (!a.length) return;
+  const a = alertes(); if (!a.length) return maybeKmPopup();
   const key = `asdj_alertes_${USER.id}`; let vu = {}; try { vu = JSON.parse(localStorage.getItem(key) || "{}"); } catch (e) {}
   const now = Date.now(), sig = x => `${x.m.id}|${x.k}|${x.due}`;
-  if (!a.some(x => !vu[sig(x)] || now - vu[sig(x)] > 48 * 3600e3)) return;
+  if (!a.some(x => !vu[sig(x)] || now - vu[sig(x)] > 48 * 3600e3)) return maybeKmPopup();
   const nv = {}; a.forEach(x => nv[sig(x)] = now); try { localStorage.setItem(key, JSON.stringify(nv)); } catch (e) {}
   openModal({ title: "⚠️ Rendez-vous à prendre", center: true, cancel: null, ok: "Compris",
-    html: a.slice(0, 6).map(x => `<a class="echrow ${x.niveau}" href="#/machine/${encodeURIComponent(x.m.id)}" data-act="m-cancel" style="display:block;margin-bottom:8px;color:inherit;text-decoration:none"><h4>${esc(x.nom)} <span class="due ${x.niveau}">${esc(echTxt(x))}</span></h4>
-      <p>${plaqueHTML(x.m)} ${esc(x.m.modele || "")}</p><p>${x.k === "rev" ? "Faite" : "Fait"} le ${frDate(x.m[x.le])} · à refaire avant le <b>${frDate(x.due)}</b></p></a>`).join("")
+    html: a.slice(0, 6).map(popRow).join("")
       + (a.length > 6 ? `<p class="muted">… et ${a.length - 6} autre${a.length - 6 > 1 ? "s" : ""}.</p>` : "")
       + `<p class="muted" style="margin-top:6px">Ce rappel revient tous les 2 jours tant que la date n'est pas mise à jour.</p>` });
 }
@@ -1324,6 +1433,8 @@ document.addEventListener("click", async e => {
   }
   if (act === "statut" && id) return isVeh(S.machines[id]) ? askStatutV(id, t.dataset.v) : askStatut(id, t.dataset.v);
   if (act === "ech" && id) return askEch(id, t.dataset.k, t.dataset.d);
+  if (act === "rev-report" && id) return askRevReport(id);
+  if (act === "rev-choix") { const vid = t.dataset.id, c = t.dataset.c; closeModal(true); setTimeout(() => askRevChoix(vid, c), 0); return; }
   if (act === "km" && id) return askKm(id);
   if (act === "pret" && id) return askPret(id);
   if (act === "lieu" && id) { draftSet(id, "lieu", t.dataset.v); render(false); return; }
@@ -1425,7 +1536,7 @@ function fieldValue(el) {
   const fld = el.dataset.field; let v = el.value;
   if (fld === "equipe") return v === "" ? null : +v;
   if (["depuis", "controle", "depose_le", "recupere_le", "pret_le", "km_le", "ct_le", "pol_le", "rev_le", "ct_avant", "pol_avant", "rev_avant", "mise_circulation"].includes(fld)) return v || null;
-  if (["km", "rev_km", "ct_mois", "pol_mois", "rev_mois"].includes(fld)) return v === "" ? null : +v;
+  if (["km", "rev_km", "ct_mois", "pol_mois", "rev_mois", "rev_cible_km"].includes(fld)) return v === "" ? null : +v;
   if (fld === "plaque") return fmtPlaque(v);
   return v.trim();
 }
