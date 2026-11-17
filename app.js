@@ -1,7 +1,7 @@
 /* ASDJ - Tools : suivi du matériel par famille et par équipe.
    Données partagées entre les comptes connectés (Supabase), copie locale + file d'attente pour le hors ligne. */
 "use strict";
-const APP_V = 9;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
+const APP_V = 10;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
 const CFG = window.APP_CONFIG;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -60,12 +60,19 @@ const isoOf = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0
 function echeances(m) {
   const now = new Date(); now.setHours(0, 0, 0, 0);
   return ECH.filter(e => +m[e.mois] > 0).map(e => {
-    const le = m[e.le]; if (!le) return Object.assign({}, e, { niveau: "vide" });
-    const due = addMonths(le, +m[e.mois]), jours = Math.round((due - now) / 864e5);
-    return Object.assign({}, e, { due: isoOf(due), jours, niveau: jours < 0 ? "late" : jours <= 14 ? "warn" : "ok" });
+    const av = m[`${e.k}_avant`]; let due = null;
+    if (av) due = String(av).slice(0, 10);                                     // date « avant le » (carte grise)
+    else if (e.k === "pol") {                                                   // pollution : 1 an après le dernier CT
+      if (m.ct_le && (!m.pol_le || m.ct_le >= m.pol_le)) due = isoOf(addMonths(m.ct_le, +m.pol_mois));
+      else if (m.pol_le || m.ct_avant) return Object.assign({}, e, { niveau: "apres" });
+      else return Object.assign({}, e, { niveau: "vide" });
+    } else if (m[e.le]) due = isoOf(addMonths(m[e.le], +m[e.mois]));
+    else return Object.assign({}, e, { niveau: "vide" });
+    const [y, mo, d] = due.split("-").map(Number), jours = Math.round((new Date(y, mo - 1, d) - now) / 864e5);
+    return Object.assign({}, e, { due, avant: !!av, jours, niveau: jours < 0 ? "late" : jours <= 14 ? "warn" : "ok" });
   });
 }
-const echTxt = x => x.niveau === "vide" ? "date à remplir" : x.niveau === "late" ? `dépassé de ${-x.jours} j` : x.jours === 0 ? "aujourd'hui" : x.niveau === "warn" ? `dans ${x.jours} jour${x.jours > 1 ? "s" : ""}` : "à jour";
+const echTxt = x => x.niveau === "apres" ? "après le prochain CT" : x.niveau === "vide" ? "date à remplir" : x.niveau === "late" ? `dépassé de ${-x.jours} j` : x.jours === 0 ? "aujourd'hui" : x.niveau === "warn" ? `dans ${x.jours} jour${x.jours > 1 ? "s" : ""}` : "à jour";
 function alertes() { const out = []; vehicules().forEach(m => echeances(m).forEach(x => { if (x.niveau === "warn" || x.niveau === "late") out.push(Object.assign({ m }, x)); })); return out.sort((a, b) => a.jours - b.jours); }
 const vprio = m => { const a = echeances(m); return (VPRIO[m.statut] ?? 9) * 10 + (a.some(x => x.niveau === "late") ? 0 : a.some(x => x.niveau === "warn") ? 1 : 5); };
 const sc = id => `var(--s-${id})`;
@@ -691,11 +698,11 @@ function viewMachine(id) {
   </main>
   <div class="savebar ${dirty ? "" : "hidden"}" id="savebar"><span>Modifications non enregistrées</span><button class="btn light" data-act="draft-cancel">Annuler</button><button class="btn" data-act="draft-save">💾 Enregistrer</button></div>`;
 }
-const CHAMPS = { plaque: "Plaque", type_vehicule: "Type de véhicule", km: "Kilométrage", km_le: "Kilométrage relevé le", ct_le: "Contrôle technique fait le", ct_mois: "Délai du CT", pol_le: "Contrôle pollution fait le", pol_mois: "Délai pollution", rev_le: "Révision faite le", rev_km: "Km à la révision", rev_mois: "Délai révision", probleme_type: "Genre de problème", creation: "Ajout", _num: "Numéro", numero: "Numéro", pret_a: "Prêtée à", pret_le: "Prêtée le", depose_par: "Déposée par", depose_le: "Déposée le", recupere_par: "Récupérée par", recupere_le: "Récupérée le", photo: "Photo", statut: "État", lieu: "Lieu", reparateur: "Réparateur", depuis: "Depuis", motif: "Pourquoi", equipe: "Équipe", controle: "Contrôle", modele: "Modèle", notes: "Notes", actif: "Dans le parc", affectation: "Affectation", famille: "Type" };
+const CHAMPS = { ct_avant: "Prochain CT avant le", pol_avant: "Pollution avant le", rev_avant: "Révision avant le", mise_circulation: "Mise en circulation", plaque: "Plaque", type_vehicule: "Type de véhicule", km: "Kilométrage", km_le: "Kilométrage relevé le", ct_le: "Contrôle technique fait le", ct_mois: "Délai du CT", pol_le: "Contrôle pollution fait le", pol_mois: "Délai pollution", rev_le: "Révision faite le", rev_km: "Km à la révision", rev_mois: "Délai révision", probleme_type: "Genre de problème", creation: "Ajout", _num: "Numéro", numero: "Numéro", pret_a: "Prêtée à", pret_le: "Prêtée le", depose_par: "Déposée par", depose_le: "Déposée le", recupere_par: "Récupérée par", recupere_le: "Récupérée le", photo: "Photo", statut: "État", lieu: "Lieu", reparateur: "Réparateur", depuis: "Depuis", motif: "Pourquoi", equipe: "Équipe", controle: "Contrôle", modele: "Modèle", notes: "Notes", actif: "Dans le parc", affectation: "Affectation", famille: "Type" };
 function histVal(c, v, veh) {
   if (v == null || v === "") return "—";
   if (c === "statut") return veh ? (VST[v] ? VST[v].nom : v) : ST[v] ? ST[v].nom : (VST[v] ? VST[v].nom : v);
-  if (["km_le", "ct_le", "pol_le", "rev_le"].includes(c)) return frDate(v);
+  if (["km_le", "ct_le", "pol_le", "rev_le", "ct_avant", "pol_avant", "rev_avant", "mise_circulation"].includes(c)) return frDate(v);
   if (["km", "rev_km"].includes(c)) return `${Number(v).toLocaleString("fr-FR")} km`;
   if (["ct_mois", "pol_mois", "rev_mois"].includes(c)) return DELAIS[v] || `${v} mois`;
   if (c === "type_vehicule") return VTYPES[v] || v;
@@ -961,8 +968,11 @@ function viewVehicule(m) {
   const dirty = DRAFT && DRAFT.id === id && Object.keys(DRAFT.v).length;
   const otherDraft = DRAFT && DRAFT.id !== id && Object.keys(DRAFT.v).length && S.machines[DRAFT.id];
   const ech = echeances(m);
-  const echRow = x => `<div class="echrow ${x.niveau === "ok" ? "" : x.niveau}"><h4>${esc(x.nom)} <span class="due ${x.niveau}">${esc(echTxt(x))}</span></h4>
-      ${x.niveau === "vide" ? `<p>Pas encore de date : indique quand ${x.k === "rev" ? "la dernière a été faite" : "le dernier a été fait"}.</p>` : `<p>${x.k === "rev" ? "Faite" : "Fait"} le ${frDate(m[x.le])}${x.k === "rev" && m.rev_km ? ` à ${Number(m.rev_km).toLocaleString("fr-FR")} km` : ""} · tous les <b>${esc(DELAIS[m[x.mois]] || `${m[x.mois]} mois`)}</b></p><p>${x.k === "rev" ? "Prochaine" : "Prochain"} avant le <b>${frDate(x.due)}</b></p>`}
+  const fait = x => m[x.le] ? `<p>${x.k === "rev" ? "Faite" : "Fait"} le ${frDate(m[x.le])}${x.k === "rev" && m.rev_km ? ` à ${Number(m.rev_km).toLocaleString("fr-FR")} km` : ""}</p>` : "";
+  const echRow = x => `<div class="echrow ${["ok", "apres"].includes(x.niveau) ? "" : x.niveau}"><h4>${esc(x.nom)} <span class="due ${x.niveau === "apres" ? "ok" : x.niveau}">${esc(echTxt(x))}</span></h4>
+      ${x.niveau === "vide" ? `<p>Pas encore de date : indique quand ${x.k === "rev" ? "la dernière a été faite" : "le dernier a été fait"}.</p>`
+        : x.niveau === "apres" ? `${fait(x)}<p>${m.pol_le ? "Déjà fait depuis le dernier contrôle technique : le prochain se fera après le CT." : "À faire 1 an après le premier contrôle technique."}</p>`
+        : `${fait(x)}<p>${x.k === "rev" ? "Prochaine" : "Prochain"} avant le <b>${frDate(x.due)}</b>${x.avant ? " <span class='muted'>(date notée)</span>" : ` · délai ${esc(DELAIS[m[x.mois]] || `${m[x.mois]} mois`)}`}</p>`}
       <div class="row2"><button class="btn light" data-act="ech" data-k="${x.k}" data-d="auj">✅ ${x.k === "rev" ? "Faite" : "Fait"} aujourd'hui</button><button class="btn light" data-act="ech" data-k="${x.k}" data-d="autre">📅 Autre date</button></div></div>`;
   return header(disp(m), m.plaque ? m.modele : "Véhicule", { fam: "vehicule" }) + `<main>
     ${otherDraft ? `<a class="draftwarn" href="#/machine/${encodeURIComponent(DRAFT.id)}">⚠️ Corrections non enregistrées sur <b>${esc(disp(otherDraft))}</b> : touche ici pour les valider.</a>` : ""}
@@ -994,6 +1004,10 @@ function viewVehicule(m) {
       <label class="f" for="f-equipe">Équipe</label><select class="inp" id="f-equipe" data-field="equipe">${teamOpts}</select>
       <div class="two"><div>${sel("ct_mois", "CT tous les", [["24", "2 ans"], ["12", "1 an"]])}</div><div>${sel("pol_mois", "Pollution tous les", [["", "Non concerné"], ["12", "1 an"]])}</div></div>
       ${sel("rev_mois", "Révision tous les", [["12", "1 an"], ["6", "6 mois"], ["24", "2 ans"]])}
+      ${inp("mise_circulation", "Mise en circulation", "date")}
+      <p class="muted" style="margin:10px 0 0">Prochaines dates « avant le » (carte grise, carnet) : à remplir seulement si on les connaît.</p>
+      <div class="two"><div>${inp("ct_avant", "Prochain CT avant le", "date")}</div><div>${+dv(m, "pol_mois") > 0 ? inp("pol_avant", "Pollution avant le", "date") : ""}</div></div>
+      ${inp("rev_avant", "Prochaine révision avant le", "date")}
       ${inp("reparateur", "Garage", "text", "Nom du garage")}
       <div class="two"><div>${inp("depose_par", "Déposé par", "text", "Nom", "noms")}</div><div>${inp("depose_le", "Déposé le", "date")}</div></div>
       <div class="two"><div>${inp("recupere_par", "Récupéré par", "text", "Nom", "noms")}</div><div>${inp("recupere_le", "Récupéré le", "date")}</div></div>
@@ -1072,13 +1086,15 @@ function askEch(id, k, quand) {
       <label class="f" for="m-ed">Date</label><input class="inp" id="m-ed" type="date" value="${quand === "auj" ? today() : (m[e.le] || today())}" max="${today()}">
       <label class="f" for="m-ekm">Kilométrage <span class="muted">(facultatif)</span></label><input class="inp" id="m-ekm" type="number" inputmode="numeric" min="0" placeholder="${m.km ? `dernier relevé : ${Number(m.km).toLocaleString("fr-FR")}` : "ex. 156500"}">
       <p class="muted" id="m-enext"></p>`,
-    onOpen: d => { const upd = () => { const x = d.querySelector("#m-ed").value; d.querySelector("#m-enext").textContent = x && +m[e.mois] ? `Prochain rappel : 2 semaines avant le ${frDate(isoOf(addMonths(x, +m[e.mois])))}.` : ""; }; d.querySelector("#m-ed").addEventListener("input", upd); upd(); if (quand !== "auj") setTimeout(() => d.querySelector("#m-ed").focus(), 50); },
+    onOpen: d => { const upd = () => { const x = d.querySelector("#m-ed").value; d.querySelector("#m-enext").textContent = k === "pol" ? "Le prochain se fera avec le prochain contrôle technique." : x && +m[e.mois] ? `Prochain rappel : 2 semaines avant le ${frDate(isoOf(addMonths(x, +m[e.mois])))}.` : ""; }; d.querySelector("#m-ed").addEventListener("input", upd); upd(); if (quand !== "auj") setTimeout(() => d.querySelector("#m-ed").focus(), 50); },
     onOk: () => {
       const d = mval("m-ed"), km = mval("m-ekm");
       if (!d) { $("#m-msg").innerHTML = `<div class="msg err">Indique la date.</div>`; return false; }
       if (d > today()) { $("#m-msg").innerHTML = `<div class="msg err">La date ne peut pas être dans le futur.</div>`; return false; }
       if (km && !/^\d+$/.test(km)) { $("#m-msg").innerHTML = `<div class="msg err">Le kilométrage doit être un nombre.</div>`; return false; }
       const ch = { [e.le]: d };
+      if (m[`${k}_avant`]) ch[`${k}_avant`] = null;
+      if (k === "ct" && m.pol_avant) ch.pol_avant = null;      // nouveau CT : la pollution repart d'un an après
       if (km) { if (k === "rev") ch.rev_km = +km; if (!m.km_le || d >= m.km_le) { ch.km = +km; ch.km_le = d; } }
       if (k === "rev" && m.statut === "revision") { ch.statut = "operationnelle"; ch.depuis = today(); ch.motif = ""; }
       addEvent(id, k, { fait_le: d, km: km ? +km : null });
@@ -1408,7 +1424,7 @@ function draftSet(id, fld, v) {
 function fieldValue(el) {
   const fld = el.dataset.field; let v = el.value;
   if (fld === "equipe") return v === "" ? null : +v;
-  if (["depuis", "controle", "depose_le", "recupere_le", "pret_le", "km_le", "ct_le", "pol_le", "rev_le"].includes(fld)) return v || null;
+  if (["depuis", "controle", "depose_le", "recupere_le", "pret_le", "km_le", "ct_le", "pol_le", "rev_le", "ct_avant", "pol_avant", "rev_avant", "mise_circulation"].includes(fld)) return v || null;
   if (["km", "rev_km", "ct_mois", "pol_mois", "rev_mois"].includes(fld)) return v === "" ? null : +v;
   if (fld === "plaque") return fmtPlaque(v);
   return v.trim();
