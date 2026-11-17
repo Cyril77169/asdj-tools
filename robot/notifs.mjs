@@ -1,7 +1,9 @@
 // Robot « Notifications » : chaque matin vers 6 h 30 (et à midi pour l'urgent), envoie UNE notification groupée
 // aux téléphones abonnés quand une échéance de véhicule approche. Lancé par .github/workflows/notifs.yml.
-// Rythme : 2 semaines avant → tous les 2 jours à 6 h 30 ; à 2 jours ou moins (ou dépassé) → 6 h 30 ET midi ;
-// rendez-vous pris → plus rien jusqu'au jour J (6 h 30 : « rendez-vous aujourd'hui ») ; RDV passé → tous les 2 jours.
+// Rythme (jours ouvrés seulement : pas le samedi, le dimanche ni les jours fériés) :
+// 2 semaines avant → tous les 2 jours à 6 h 30 ; 2 derniers jours avant la date limite → 6 h 30 ET midi ;
+// date dépassée sans rendez-vous ni « fait » → tous les 2 jours jusqu'à ce que ce soit fait ;
+// rendez-vous pris → plus rien jusqu'au jour J (6 h 30), ou la veille ouvrée si le RDV tombe un jour non travaillé.
 
 const ECH = [
   { k: "ct", nom: "CT", le: "ct_le", mois: "ct_mois" },
@@ -13,6 +15,17 @@ const isoOf = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate(
 function addMonths(iso, n) { const [y, mo, d] = String(iso).slice(0, 10).split("-").map(Number); const x = new Date(y, mo - 1 + n, d); if (x.getDate() !== d) x.setDate(0); return x; }
 const days = (iso, today) => { const [y, m, d] = String(iso).slice(0, 10).split("-").map(Number); const [a, b, c] = today.split("-").map(Number); return Math.round((new Date(y, m - 1, d) - new Date(a, b - 1, c)) / 864e5); };
 const frDate = iso => { const [y, m, d] = String(iso).slice(0, 10).split("-"); return `${d}/${m}`; };
+/* jours fériés en France (fixes + Pâques, Ascension, Pentecôte) */
+function paques(y) { const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451), mo = Math.floor((h + l - 7 * m + 114) / 31), da = ((h + l - 7 * m + 114) % 31) + 1; return new Date(y, mo - 1, da); }
+export function ferie(iso) {
+  const [y, m, d] = iso.split("-").map(Number), md = `${pad(m)}-${pad(d)}`;
+  if (["01-01", "05-01", "05-08", "07-14", "08-15", "11-01", "11-11", "12-25"].includes(md)) return true;
+  const p = paques(y), plus = n => isoOf(new Date(p.getFullYear(), p.getMonth(), p.getDate() + n));
+  return [plus(1), plus(39), plus(50)].includes(iso);
+}
+export function ouvre(iso) { const [y, m, d] = iso.split("-").map(Number), j = new Date(y, m - 1, d).getDay(); return j !== 0 && j !== 6 && !ferie(iso); }
+const JOURS = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
+const addDays = (iso, n) => { const [y, m, d] = iso.split("-").map(Number); return isoOf(new Date(y, m - 1, d + n)); };
 
 // même calcul que l'appli (echeances)
 export function echeances(m, today) {
@@ -42,13 +55,24 @@ export function selection(vehicules, journal, creneau, today, nowMs) {
     if (m.actif === false || m.famille !== "vehicule") continue;
     const nomV = m.plaque || m.modele || m.id;
     for (const x of echeances(m, today)) {
+      // rendez-vous qui tombe un jour non travaillé (week-end, férié) : prévenir la veille ouvrée
+      if (x.mode === "rdv" && x.rdvj > 0) {
+        let tousOff = true; for (let i = 1; i <= x.rdvj; i++) if (ouvre(addDays(today, i))) { tousOff = false; break; }
+        if (tousOff && creneau === "matin") {
+          const lieu = m[x.k === "rev" ? "rev_garage" : `${x.k}_lieu`], cle = `${m.id}|${x.k}|${x.rdv}|jourJ`, [y, mo, d] = x.rdv.split("-").map(Number);
+          if (!journal[cle]) items.push({ cle, txt: `RDV ${JOURS[new Date(y, mo - 1, d).getDay()]} : ${x.nom} ${nomV}${lieu ? ` (${lieu})` : ""}`, urgent: true });
+        }
+        continue;
+      }
       if (x.niveau !== "warn" && x.niveau !== "late") continue;
       const base = `${m.id}|${x.k}|${x.due || x.rdv || "km" + m.rev_cible_km}`;
       let freq, txt;
-      if (x.mode === "rdv" && x.rdvj === 0) { freq = "jourJ"; txt = `RDV aujourd'hui : ${x.nom} ${nomV}${m[`${x.k === "rev" ? "rev_garage" : x.k + "_lieu"}`] ? ` (${m[`${x.k === "rev" ? "rev_garage" : x.k + "_lieu"}`]})` : ""}`; }
+      const lieu = m[x.k === "rev" ? "rev_garage" : `${x.k}_lieu`];
+      if (x.mode === "rdv" && x.rdvj === 0) { freq = "jourJ"; txt = `RDV aujourd'hui : ${x.nom} ${nomV}${lieu ? ` (${lieu})` : ""}`; }
       else if (x.mode === "rdv") { freq = "2j"; txt = `${x.nom} ${nomV} : RDV du ${frDate(x.rdv)} passé, c'est fait ?`; }
       else if (x.mode === "km") { freq = "2j"; txt = `Révision ${nomV} : ${x.reste > 0 ? `plus que ${x.reste.toLocaleString("fr-FR")} km` : "kilométrage atteint"}`; }
-      else if (x.jours <= 2) { freq = "urgent"; txt = `${x.nom} ${nomV} ${x.jours < 0 ? `dépassé de ${-x.jours} j` : x.jours === 0 ? "aujourd'hui" : `dans ${x.jours} j`}`; }
+      else if (x.jours < 0) { freq = "2j"; txt = `${x.nom} ${nomV} dépassé de ${-x.jours} j : RDV à prendre`; }
+      else if (x.jours <= 2) { freq = "urgent"; txt = `${x.nom} ${nomV} ${x.jours === 0 ? "aujourd'hui" : `dans ${x.jours} j`}`; }
       else { freq = "2j"; txt = `${x.nom} ${nomV} dans ${x.jours} j`; }
       const last = journal[base] || 0;
       let ok = false;
@@ -90,6 +114,7 @@ async function main() {
   await sql(`insert into public.reglages (cle, valeur) values ('vapid_public', ${q(PUB)}) on conflict (cle) do update set valeur = excluded.valeur`);
   const { today, creneau } = creneauParis(new Date());
   if (!creneau && !TEST) { console.log("Pas l'heure d'un envoi (6 h 30 ou midi, heure de Paris)."); return; }
+  if (!TEST && !ouvre(today)) { console.log("Week-end ou jour férié : pas de notification aujourd'hui."); return; }
   const slotKey = `creneau|${creneau}|${today}`;
   // seulement les téléphones des chefs (Cyril et Nico), accès non coupé
   const abos = await sql("select a.endpoint, a.p256dh, a.auth from public.push_abonnements a join public.membres m on m.user_id = a.user_id where m.role = 'chef' and m.actif");
