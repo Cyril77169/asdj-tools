@@ -1,7 +1,7 @@
 /* ASDJ - Tools : suivi du matériel par famille et par équipe.
    Données partagées entre les comptes connectés (Supabase), copie locale + file d'attente pour le hors ligne. */
 "use strict";
-const APP_V = 14;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
+const APP_V = 15;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
 const CFG = window.APP_CONFIG;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -141,6 +141,40 @@ const chef = n => (S.equipes[n] && S.equipes[n].chef) || "";
 const teamLabel = n => n == null || n === "" ? "Dépôt" : `Équipe ${n}` + (chef(n) ? ` · ${chef(n)}` : "");
 const natural = (a, b) => a.localeCompare(b, "fr", { numeric: true });
 const norm = t => String(t ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+/* recherche tolérante : fautes d'orthographe, espaces en trop, lettres en trop ou en moins */
+const squash = t => norm(t).replace(/[^a-z0-9]/g, "");
+function lev(a, b, max) {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i]; let best = i;
+    for (let j = 1; j <= b.length; j++) { cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); if (cur[j] < best) best = cur[j]; }
+    if (best > max) return max + 1; prev = cur;
+  }
+  return prev[b.length];
+}
+/* 0 = trouvé tel quel, 1 = trouvé malgré des fautes, -1 = pas trouvé */
+function fuzzyScore(query, hay) {
+  const q = squash(query); if (!q) return 0;
+  const H = squash(hay); if (H.includes(q)) return 0;
+  const toks = norm(query).split(/[\s\-_.,;/'’]+/).map(squash).filter(Boolean);
+  let score = 0;
+  for (const t of toks) {
+    if (H.includes(t)) continue;
+    const tol = /\d/.test(t) ? (t.length >= 7 ? 1 : 0) : t.length <= 4 ? 0 : t.length <= 7 ? 1 : 2;
+    if (!tol) {
+      // mot de 4 lettres : une seule faute tolérée, mais seulement sur un mot entier ou le début d'un mot (« kevn » → Kevin)
+      if (t.length === 4 && !/\d/.test(t) && norm(hay).split(/[^a-z0-9]+/).some(w => w.length >= 3 && (lev(t, w, 1) <= 1 || lev(t, w.slice(0, 4), 1) <= 1 || lev(t, w.slice(0, 5), 1) <= 1))) { score = 1; continue; }
+      return -1;
+    }
+    let ok = false;
+    for (let L = Math.max(1, t.length - tol); L <= t.length + tol && !ok; L++)
+      for (let i = 0; i + L <= H.length; i++) if (lev(t, H.slice(i, i + L), tol) <= tol) { ok = true; break; }
+    if (!ok) return -1;
+    score = 1;
+  }
+  return score;
+}
 const prio = m => PRIO[eff(m)] ?? 9;
 const byAlert = (a, b) => prio(a) - prio(b) || natural(a.id, b.id);
 const isVeh = m => !!m && typeof m === "object" && m.famille === "vehicule";
@@ -502,7 +536,8 @@ function viewHome() {
     `<main>${segHTML("m")}${alertBandHTML(false)}<input class="search" id="home-search" type="search" placeholder="🔍 Code, modèle, chef, type de machine…" autocomplete="off">
     ${summaryHTML(all, "#/tout?")}
     <div class="tiles">${tiles}</div>
-    <a class="sechead" href="#/equipes"><span class="tb-ic">${SVG.team}</span><b>Les équipes</b><span class="sp"></span><small>Tout voir</small>${SVG.chev}</a>
+    ${isChef() ? `<div class="duo"><a href="#/equipes"><span class="tb-ic">${SVG.team}</span><span>Les équipes<small>Tout voir</small></span></a><a href="#/tenues"><span class="tb-ic">${TENUE_IC.tshirt}</span><span>Tenues<small>Tailles · Cyril et Nico</small></span></a></div>`
+      : `<a class="sechead" href="#/equipes"><span class="tb-ic">${SVG.team}</span><b>Les équipes</b><span class="sp"></span><small>Tout voir</small>${SVG.chev}</a>`}
     <div class="tgrid">${teams.map(n => teamCard(n, all)).join("")}</div>
     <a class="allband" href="#/tout"><span class="tb-ic">${SVG.list}</span><span class="tb-txt"><b>Toutes les machines</b><small>${all.length} machines</small></span><span class="tb-chev">${SVG.chev}</span></a>
     </main>`;
@@ -571,10 +606,11 @@ function viewEquipe(id, q) {
 function viewTout(q) {
   const sel = q.get("statut"), txt = norm((q.get("q") || "").trim());
   const all = actives();
-  const list = all.filter(m => statMatch(m, sel) &&
-    (!txt || txt.split(/\s+/).every(w => norm([m.id, m.modele, (m.modele || "").replace(/\s+/g, ""), FAM[m.famille] && FAM[m.famille].un, FAM[m.famille] && FAM[m.famille].nom,
-      chef(m.equipe), m.equipe != null ? `equipe ${m.equipe}` : "depot sans equipe", noNum(m) ? "sans numero sans n" : "", ST[eff(m)] && ST[eff(m)].nom, LIEUX[m.lieu], m.reparateur, m.depose_par, m.recupere_par, m.pret_a, m.lieu === "pret" ? "pretee pret" : "", m.notes, m.motif].join(" ")).includes(w))))
-    .sort(byAlert);
+  const hay = m => [m.id, m.modele, FAM[m.famille] && FAM[m.famille].un, FAM[m.famille] && FAM[m.famille].nom,
+      chef(m.equipe), m.equipe != null ? `equipe ${m.equipe}` : "depot sans equipe", noNum(m) ? "sans numero sans n" : "", ST[eff(m)] && ST[eff(m)].nom, LIEUX[m.lieu], m.reparateur, m.depose_par, m.recupere_par, m.pret_a, m.lieu === "pret" ? "pretee pret" : "", m.notes, m.motif].join(" | ");
+  const sc2 = new Map();
+  const list = all.filter(m => { if (!statMatch(m, sel)) return false; if (!txt) return true; const f = fuzzyScore(txt, hay(m)); if (f < 0) return false; sc2.set(m.id, f); return true; })
+    .sort((a, b) => (sc2.get(a.id) || 0) - (sc2.get(b.id) || 0) || byAlert(a, b));
   const base = `#/tout${txt ? `?q=${encodeURIComponent(q.get("q").trim())}` : ""}`;
   return header("Toutes les machines", `${all.length} machines`) +
     `<main><input class="search" id="search" type="search" placeholder="🔍 Code, modèle, chef, type de machine…" autocomplete="off" value="${esc(q.get("q") || "")}">
@@ -1309,6 +1345,126 @@ async function pushOff(btn) {
   loadParams();
 }
 
+/* ---------- TENUES (tailles du personnel, chefs seulement) ---------- */
+/* icônes des vêtements (dessins originaux, mêmes couleurs sur Android et iPhone) */
+const TENUE_IC = {
+  tshirt: `<svg viewBox="0 0 64 64"><path d="M22 8l-14 7 5 12 6-3v32h26V24l6 3 5-12-14-7c-1 5-5 8-10 8s-9-3-10-8z" fill="#4fc3f7" stroke="#0277bd" stroke-width="2.5" stroke-linejoin="round"/></svg>`,
+  pantalon: `<svg viewBox="0 0 64 64"><path d="M18 6h28l4 52H37l-5-34-5 34H14z" fill="#3f51b5" stroke="#1a237e" stroke-width="2.5" stroke-linejoin="round"/><path d="M18 12h28" stroke="#1a237e" stroke-width="2.5"/><path d="M32 12v12" stroke="#1a237e" stroke-width="2"/></svg>`,
+  sweat: `<svg viewBox="0 0 64 64"><path d="M23 12c0-6 4-9 9-9s9 3 9 9l13 6 4 26-8 2-3-16v28H17V30l-3 16-8-2 4-26z" fill="#8d6e63" stroke="#4e342e" stroke-width="2.5" stroke-linejoin="round"/><path d="M24 13c2 6 14 6 16 0" fill="#6d4c41" stroke="#4e342e" stroke-width="2"/><path d="M29 18v8M35 18v8" stroke="#efebe9" stroke-width="2" stroke-linecap="round"/><rect x="24" y="40" width="16" height="9" rx="3" fill="none" stroke="#4e342e" stroke-width="2"/></svg>`,
+  chaussures: `<svg viewBox="0 0 64 64"><path d="M8 34c0-6 3-14 6-18h14c0 6 3 9 8 11l16 5c5 2 8 5 8 10v4H8z" fill="#6d4c41" stroke="#3e2723" stroke-width="2.5" stroke-linejoin="round"/><path d="M8 46h52v6H8z" fill="#ffb300" stroke="#3e2723" stroke-width="2.5" stroke-linejoin="round"/><path d="M28 22l6 3M30 27l6 3" stroke="#d7ccc8" stroke-width="2" stroke-linecap="round"/></svg>`,
+  hiver: `<svg viewBox="0 0 64 64"><path d="M20 8h24l12 8 3 30-8 1-2-17v28H15V30l-2 17-8-1 3-30z" fill="#1565c0" stroke="#0d3c7a" stroke-width="2.5" stroke-linejoin="round"/><path d="M16 22h32M16 32h32M16 42h32" stroke="#0d3c7a" stroke-width="2"/><path d="M32 8v50" stroke="#0d3c7a" stroke-width="2"/><g stroke="#fff" stroke-width="2.6" stroke-linecap="round"><path d="M48 44v16M41 48l14 8M41 56l14-8"/></g></svg>`,
+  misaison: `<svg viewBox="0 0 64 64"><path d="M22 8h20l12 8 3 30-8 1-2-17v28H17V30l-2 17-8-1 3-30z" fill="#9ccc65" stroke="#33691e" stroke-width="2.5" stroke-linejoin="round"/><path d="M22 8l10 12 10-12M32 20v38" stroke="#33691e" stroke-width="2.2" fill="none"/><path d="M45 44c8 0 12 5 12 12-8 0-12-4-12-12z" fill="#ff8f00" stroke="#bf360c" stroke-width="2"/><path d="M46 46l9 9" stroke="#bf360c" stroke-width="1.6"/></svg>`,
+  orange: `<svg viewBox="0 0 64 64"><path d="M20 6h8l4 10 4-10h8l10 8 3 32-8 1-2-15v26H17V32l-2 15-8-1 3-32z" fill="#ff6d00" stroke="#bf360c" stroke-width="2.5" stroke-linejoin="round"/><path d="M17 38h30M17 46h30" stroke="#e0e0e0" stroke-width="4"/><path d="M32 16v42" stroke="#bf360c" stroke-width="2"/></svg>`,
+  pluie: `<svg viewBox="0 0 64 64"><path d="M22 14c0-6 4-9 10-9s10 3 10 9l12 6 2 26-7 1-2-15v26H17V32l-2 15-7-1 2-26z" fill="#ffeb3b" stroke="#f57f17" stroke-width="2.5" stroke-linejoin="round"/><path d="M23 14c2 6 16 6 18 0" fill="#fdd835" stroke="#f57f17" stroke-width="2"/><g fill="#29b6f6"><path d="M50 40c2 3 3 5 3 6a3 3 0 0 1-6 0c0-1 1-3 3-6z"/><path d="M57 48c2 3 3 5 3 6a3 3 0 0 1-6 0c0-1 1-3 3-6z"/></g><path d="M32 18v40" stroke="#f57f17" stroke-width="2"/></svg>`,
+};
+const TENUES = [
+  { k: "t_tshirt", ic: "tshirt", nom: "T-shirt", c: "" }, { k: "t_pantalon", ic: "pantalon", nom: "Pantalon", c: "" },
+  { k: "t_sweat", ic: "sweat", nom: "Sweat à capuche", c: "" }, { k: "t_chaussures", ic: "chaussures", nom: "Chaussures", c: "" },
+  { k: "t_hiver", ic: "hiver", nom: "Blouson d'hiver", c: "hiver" }, { k: "t_misaison", ic: "misaison", nom: "Blouson mi-saison", c: "mi" },
+  { k: "t_orange", ic: "orange", nom: "Manteau orange", c: "orange" }, { k: "t_pluie", ic: "pluie", nom: "Vêtements de pluie", c: "pluie" },
+];
+const TAILLES = { t_pantalon: ["36", "38", "40", "42", "44", "46", "48", "50", "52", "54", "56"], t_chaussures: ["36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "46", "47", "48"] };
+const TAILLES_HAUT = ["XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL"];
+const TEAMC = ["#37474f", "#2e7d32", "#1565c0", "#ad1457", "#6a1b9a", "#e65100", "#00838f", "#5d4037", "#c62828", "#283593"];
+const teamColor = n => n == null ? "#78909c" : TEAMC[n % TEAMC.length];
+const persEq = p => p.equipe == null ? "Sans équipe" : teamLabel(p.equipe);
+const baseTaille = v => String(v || "").split(" · ")[0].trim();
+let PERS = null, PERS_ERR = "";
+async function loadPersonnel(rerender) {
+  if (!supa || !navigator.onLine) { PERS_ERR = PERS ? "" : "Il faut du réseau pour voir les tenues."; if (rerender) softRender(); return; }
+  try { const rows = await fetchAll("personnel", "id"); PERS = rows; PERS_ERR = ""; } catch (e) { PERS_ERR = "Tenues indisponibles pour le moment."; }
+  if (rerender) softRender();
+}
+const persActifs = () => (PERS || []).filter(p => p.actif !== false).sort((a, b) => natural(a.prenom, b.prenom));
+const manque = p => TENUES.filter(t => !p[t.k]).length;
+function viewTenues(q) {
+  if (!isChef()) return viewHome();
+  const txt = (q.get("q") || "").trim();
+  const all = persActifs(), list = txt ? all.filter(p => fuzzyScore(txt, `${p.prenom} | ${persEq(p)} | equipe ${p.equipe ?? ""}`) >= 0) : all;
+  const card = p => { const n = manque(p); return `<a class="pp" href="#/tenue/${encodeURIComponent(p.id)}"><span class="av2" style="background:${teamColor(p.equipe)}">${esc((p.prenom || "?")[0].toUpperCase())}</span><b>${esc(p.prenom)}</b><small>${esc(persEq(p))}</small><span class="${n ? "ko2" : "ok2"}">${n ? `${n} à remplir` : "Complet"}</span></a>`; };
+  return header("Tenues", "Tailles du personnel · Cyril et Nico") + `<main>
+    <input class="search" id="tenue-search" type="search" placeholder="🔍 Chercher une personne…" autocomplete="off" value="${esc(txt)}">
+    ${PERS == null ? `<p class="muted">${esc(PERS_ERR || "Chargement…")}</p>` : `<div class="ppl">${list.map(card).join("") || `<div class="empty" style="grid-column:1/-1">${all.length ? "Personne trouvé." : "Personne pour l'instant : ajoute le personnel avec le bouton ci-dessous."}</div>`}</div>`}
+    <div class="duo2"><button class="btn light" data-act="pers-add">+ Ajouter une personne</button><button class="btn" data-act="go" data-h="#/compteur">📊 Compteur des tailles</button></div></main>`;
+}
+function viewTenue(id) {
+  if (!isChef()) return viewHome();
+  const p = (PERS || []).find(x => x.id === id);
+  if (!p) return header("Tenue", "") + `<main><p class="muted">${esc(PERS == null ? (PERS_ERR || "Chargement…") : "Personne introuvable.")}</p></main>`;
+  const n = manque(p);
+  return header(p.prenom, `${persEq(p)} · Tenue`) + `<main>
+    <div class="ph"><span class="av2" style="background:rgba(255,255,255,.25);margin:0">${esc((p.prenom || "?")[0].toUpperCase())}</span><div><b>${esc(p.prenom)}</b><small>${esc(persEq(p))} · ${8 - n} taille${8 - n > 1 ? "s" : ""} sur 8</small></div></div>
+    ${p.actif === false ? `<div class="lock">Retiré(e) de la liste.</div>` : ""}
+    <div class="gt">${TENUES.map(t => `<button class="gtile ${t.c} ${p[t.k] ? "" : "vide"}" data-act="taille" data-k="${t.k}"><span class="ic">${TENUE_IC[t.ic]}</span><span><small>${esc(t.nom)}</small><b>${esc(p[t.k] || "à remplir")}</b></span></button>`).join("")}</div>
+    <p class="muted" style="margin:8px 0">Touche une case pour changer la taille.${p.maj ? ` Dernière modif : ${esc(nomDe(p.maj_par) || "?")}, le ${frDate(String(p.maj).slice(0, 10))}.` : ""}</p>
+    <div class="duo2"><button class="btn light" data-act="pers-edit">✏️ Prénom / équipe</button>${p.actif === false ? `<button class="btn light" data-act="pers-actif" data-v="true">Remettre dans la liste</button>` : `<button class="btn light" data-act="pers-actif" data-v="false">Retirer de la liste</button>`}</div></main>`;
+}
+function viewCompteur() {
+  if (!isChef()) return viewHome();
+  const all = persActifs();
+  const rows = TENUES.map(t => {
+    const opts = TAILLES[t.k] || TAILLES_HAUT, c = {}; let vide = 0;
+    all.forEach(p => { const b = baseTaille(p[t.k]); if (!b) vide++; else c[b] = (c[b] || 0) + 1; });
+    const autres = Object.keys(c).filter(k => !opts.includes(k)).sort(natural);
+    const chips = [...opts.filter(o => c[o]), ...autres].map(o => `<span class="cz"><b>${esc(o)}</b>${c[o]}</span>`).join("") + (vide ? `<span class="cz q"><b>?</b>${vide}</span>` : "");
+    return `<div class="crow"><span class="ic2">${TENUE_IC[t.ic]}</span><div><small>${esc(t.nom)}</small><div class="czs">${chips || `<span class="muted">—</span>`}</div></div></div>`;
+  }).join("");
+  return header("Compteur des tailles", `${all.length} personne${all.length > 1 ? "s" : ""}`) + `<main class="compact">${PERS == null ? `<p class="muted">${esc(PERS_ERR || "Chargement…")}</p>` : rows}
+    <p class="muted" style="margin:2px 0 0;font-size:12px">« <b>L</b> 6 » = 6 personnes en L. En orange : tailles pas encore remplies.</p></main>`;
+}
+function askTaille(id, k) {
+  const p = (PERS || []).find(x => x.id === id), t = TENUES.find(x => x.k === k); if (!p || !t) return;
+  if (!navigator.onLine) return infoModal("Pas de réseau", `<p class="mq">Il faut du réseau pour changer une taille.</p>`);
+  const opts = TAILLES[k] || TAILLES_HAUT, cur = baseTaille(p[k]), prec = String(p[k] || "").split(" · ")[1] || "";
+  openModal({ title: `${esc(t.nom)} de ${esc(p.prenom)}`, center: true, ok: "Oui, enregistrer",
+    html: `<p class="mq">Quelle taille ?</p><div class="sz" id="m-sz">${opts.map(o => `<button type="button" data-act="sz" data-v="${o}" class="${o === cur ? "on" : ""}">${o}</button>`).join("")}</div>
+      <label class="f" for="m-sz-autre">Autre taille ou précision <span class="muted">(facultatif)</span></label><input class="inp" id="m-sz-autre" value="${esc(opts.includes(cur) ? prec : (p[k] || ""))}" placeholder="ex. long, coupe large, 42/44…">
+      <p class="muted">${p[k] ? `Avant : ${esc(p[k])}. ` : ""}Le changement est gardé dans l'historique.</p>`,
+    onOk: async () => {
+      const on = MODAL.el.querySelector("#m-sz .on"), autre = mval("m-sz-autre");
+      const v = on ? (autre ? `${on.dataset.v} · ${autre}` : on.dataset.v) : autre;
+      if (!v) { $("#m-msg").innerHTML = `<div class="msg err">Choisis une taille (ou écris-la).</div>`; return false; }
+      const { data, error } = await supa.rpc("personne_maj", { p_id: id, p_champ: k, p_valeur: v });
+      if (error || !data) { $("#m-msg").innerHTML = `<div class="msg err">${isNetErr(error) ? "Pas de réseau : réessaie dans un instant." : "Refusé (" + esc(error && error.message) + ")."}</div>`; return false; }
+      Object.assign(p, data); return true;
+    } });
+}
+function askPersonne(id) {
+  const p = id ? (PERS || []).find(x => x.id === id) : null;
+  if (!navigator.onLine) return infoModal("Pas de réseau", `<p class="mq">Il faut du réseau pour ça.</p>`);
+  const teamOpts = `<option value="">Pas d'équipe / bureau</option>` + teamNums().map(n => `<option value="${n}" ${p && p.equipe === n ? "selected" : ""}>${esc(teamLabel(n))}</option>`).join("");
+  openModal({ title: p ? `Modifier ${esc(p.prenom)}` : "Ajouter une personne", center: true, ok: "Oui, enregistrer",
+    html: `<label class="f" for="m-pp">Prénom (et nom si besoin)</label><input class="inp" id="m-pp" value="${esc(p ? p.prenom : "")}" autocomplete="off">
+      <label class="f" for="m-pe">Équipe</label><select class="inp" id="m-pe">${teamOpts}</select>`,
+    onOpen: d => setTimeout(() => d.querySelector("#m-pp").focus(), 50),
+    onOk: async () => {
+      const prenom = mval("m-pp"), eq = mval("m-pe");
+      if (!prenom) { $("#m-msg").innerHTML = `<div class="msg err">Indique le prénom.</div>`; return false; }
+      if (!p && persActifs().some(x => norm(x.prenom) === norm(prenom)) && !MODAL.el.__okDbl) { MODAL.el.__okDbl = true; $("#m-msg").innerHTML = `<div class="msg err">${esc(prenom)} est déjà dans la liste. Si c'est une autre personne, appuie encore une fois sur « Oui, enregistrer » (ajoute plutôt le nom pour les distinguer).</div>`; return false; }
+      let res;
+      if (!p) res = await supa.rpc("personne_ajouter", { p_prenom: prenom, p_equipe: eq === "" ? null : +eq });
+      else {
+        res = { data: p };
+        if (prenom !== p.prenom) res = await supa.rpc("personne_maj", { p_id: p.id, p_champ: "prenom", p_valeur: prenom });
+        if (!res.error && String(eq) !== String(p.equipe ?? "")) res = await supa.rpc("personne_maj", { p_id: p.id, p_champ: "equipe", p_valeur: eq });
+      }
+      if (res.error || !res.data) { $("#m-msg").innerHTML = `<div class="msg err">${isNetErr(res.error) ? "Pas de réseau : réessaie dans un instant." : "Refusé (" + esc(res.error && res.error.message) + ")."}</div>`; return false; }
+      if (p) Object.assign(p, res.data); else { (PERS = PERS || []).push(res.data); setTimeout(() => go(`#/tenue/${encodeURIComponent(res.data.id)}`), 0); }
+      return true;
+    } });
+}
+function askPersActif(id, v) {
+  const p = (PERS || []).find(x => x.id === id); if (!p) return;
+  if (!navigator.onLine) return infoModal("Pas de réseau", `<p class="mq">Il faut du réseau pour ça.</p>`);
+  openModal({ title: v === "false" ? `Retirer ${esc(p.prenom)} ?` : `Remettre ${esc(p.prenom)} ?`, center: true, ok: "Oui, confirmer", okColor: v === "false" ? "#c62828" : undefined,
+    html: `<p class="mq">${v === "false" ? `Es-tu sûr de vouloir retirer <b>${esc(p.prenom)}</b> de la liste (départ de l'entreprise…) ? Ses tailles sont gardées, on peut le remettre.` : `<b>${esc(p.prenom)}</b> revient dans la liste avec ses tailles.`}</p>`,
+    onOk: async () => {
+      const { data, error } = await supa.rpc("personne_maj", { p_id: id, p_champ: "actif", p_valeur: v });
+      if (error || !data) { $("#m-msg").innerHTML = `<div class="msg err">Refusé (${esc(error && error.message)}).</div>`; return false; }
+      Object.assign(p, data); if (v === "false") setTimeout(() => replaceTo("#/tenues"), 0); return true;
+    } });
+}
+
 /* rendu principal (garde la position de défilement de chaque écran) */
 let pendingRender = false, focusSearch = false;
 function render(nav) {
@@ -1329,6 +1485,9 @@ function render(nav) {
   else if (a === "activite") html = viewActivite();
   else if (a === "acces") html = viewAcces();
   else if (a === "parametres") html = viewParametres();
+  else if (a === "tenues") html = viewTenues(r.q);
+  else if (a === "tenue") html = viewTenue(b);
+  else if (a === "compteur") html = viewCompteur();
   else html = viewHome();
   const y = nav ? (scrolls[r.key] || 0) : window.scrollY;
   $("#app").innerHTML = html;
@@ -1337,6 +1496,7 @@ function render(nav) {
   if (a === "activite" && isChef() && (nav || ACT.key !== actFilter().key)) loadActivite(true);
   if (a === "acces" && isChef() && nav) loadAcces();
   if (a === "parametres") loadParams();
+  if (["tenues", "tenue", "compteur"].includes(a) && isChef() && (nav || PERS == null)) loadPersonnel(true);
   if (a === "equipe") showPhotos();
   if (a === "tout" && focusSearch) { focusSearch = false; const s = $("#search"); if (s) { s.focus(); const n = s.value.length; try { s.setSelectionRange(n, n); } catch (_) {} } }
   pendingRender = false;
@@ -1450,6 +1610,11 @@ document.addEventListener("click", async e => {
   if (act === "go") return go(t.dataset.h);
   if (act === "go-r") return replaceTo(t.dataset.h);
   if (act === "push-on") return pushOn(t);
+  if (act === "sz") { const was = t.classList.contains("on"); t.parentNode.querySelectorAll("button").forEach(b => b.classList.remove("on")); if (!was) t.classList.add("on"); const mm = $("#m-msg"); if (mm) mm.innerHTML = ""; return; }
+  if (act === "taille" && r.parts[0] === "tenue") return askTaille(r.parts[1], t.dataset.k);
+  if (act === "pers-add") return askPersonne(null);
+  if (act === "pers-edit" && r.parts[0] === "tenue") return askPersonne(r.parts[1]);
+  if (act === "pers-actif" && r.parts[0] === "tenue") return askPersActif(r.parts[1], t.dataset.v);
   if (act === "push-off") return pushOff(t);
   if (act === "pbt") { t.parentNode.querySelectorAll("button").forEach(b => b.classList.toggle("on", b === t)); const mm = $("#m-msg"); if (mm) mm.innerHTML = ""; return; }
   if (act === "act-f") { replaceTo(t.dataset.h); return; }
@@ -1620,6 +1785,12 @@ document.addEventListener("input", e => {
   if (MODAL && el.closest && el.closest("#modal")) { const mm = $("#m-msg"); if (mm) mm.innerHTML = ""; }
   if (el.dataset && el.dataset.field) { const r = parseRoute(); if (r.parts[0] === "machine") draftSet(r.parts[1], el.dataset.field, fieldValue(el)); return; }
   if (el.id === "home-search") { const v = el.value.trim(); if (v) { focusSearch = true; go(`#/tout?q=${encodeURIComponent(v)}`); } return; }
+  if (el.id === "tenue-search") {
+    clearTimeout(searchT);
+    searchT = setTimeout(() => { const v = el.value.trim(); history.replaceState(null, "", `#/tenues${v ? "?q=" + encodeURIComponent(v) : ""}`); const pos = el.selectionStart; render(false);
+      const s2 = $("#tenue-search"); if (s2) { s2.focus(); try { s2.setSelectionRange(pos, pos); } catch (_) {} } }, 200);
+    return;
+  }
   if (el.id !== "search") return;
   clearTimeout(searchT);
   searchT = setTimeout(() => {

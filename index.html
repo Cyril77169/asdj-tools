@@ -271,6 +271,32 @@ body.noscroll{overflow:hidden}
 .setrow span{grid-row:1/3;font-size:20px}.setrow b{font-size:15px}.setrow small{grid-column:2;color:var(--muted);font-size:13px}.setrow svg{grid-row:1/3;grid-column:3;width:16px;height:16px;color:#9aa}
 .choix3{display:grid;gap:8px;margin-top:6px}.choix3 .btn{text-align:left;padding:12px}
 .vsumm .sum span{white-space:normal;line-height:1.15}
+/* tenues (v15) */
+.duo{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:18px 0 10px}
+.duo a{display:flex;align-items:center;gap:10px;background:#fff;border-radius:16px;box-shadow:var(--shadow);padding:12px;color:inherit;text-decoration:none;font-weight:800;font-size:16px;line-height:1.15}
+.duo a small{display:block;font-weight:600;color:#777;font-size:12px}.duo .tb-ic svg{width:26px;height:26px}
+.duo2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.duo2 .btn{padding:12px 8px}
+.ppl{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.pp{background:#fff;border-radius:14px;box-shadow:var(--shadow);padding:10px 4px;text-align:center;color:inherit;text-decoration:none;display:block}
+.av2{width:46px;height:46px;border-radius:50%;margin:0 auto 4px;display:grid;place-items:center;color:#fff;font-weight:900;font-size:18px}
+.pp b{display:block;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.pp small{display:block;color:#777;font-size:12px}
+.ok2,.ko2{font-size:11px;font-weight:800;border-radius:999px;padding:1px 6px;display:inline-block;margin-top:3px}.ok2{color:#1b6b2e;background:#e5f6e8}.ko2{color:#a04f00;background:#ffe9cc}
+.ph{display:flex;gap:12px;align-items:center;background:var(--green,#2e7d32);background:#2e7d32;color:#fff;border-radius:16px;padding:10px 14px;margin-bottom:10px}
+.ph b{font-size:20px;display:block}.ph small{opacity:.9}
+.gt{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.gtile{background:#fff;border:0;border-radius:14px;box-shadow:var(--shadow);padding:8px 10px;display:flex;align-items:center;gap:10px;min-height:74px;text-align:left;font-family:inherit;color:inherit;cursor:pointer}
+.gtile .ic{width:52px;height:52px;border-radius:12px;background:#eef5ec;display:grid;place-items:center;flex:none}.gtile .ic svg{width:40px;height:40px}
+.gtile.hiver .ic{background:#dff1ff}.gtile.mi .ic{background:#fff0dc}.gtile.orange .ic{background:#ffe6cc}.gtile.pluie .ic{background:#fff8d6}
+.gtile small{display:block;color:#555;font-size:12px;font-weight:800;line-height:1.15}.gtile b{font-size:22px;color:#1b5e20;line-height:1.1;word-break:break-word}
+.gtile.vide b{color:#a04f00;font-size:15px}
+.sz{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.sz button{min-width:48px;border:2px solid #dfe7df;background:#fff;border-radius:12px;padding:9px 6px;font-weight:800;font-size:15px;font-family:inherit;cursor:pointer;color:inherit}
+.sz button.on{background:#2e7d32;border-color:#2e7d32;color:#fff}
+main.compact{padding-top:10px}
+.crow{display:flex;gap:10px;align-items:center;background:#fff;border-radius:12px;box-shadow:var(--shadow);padding:6px 10px;margin-bottom:6px}
+.ic2{width:40px;height:40px;border-radius:10px;background:#eef5ec;display:grid;place-items:center;flex:none}.ic2 svg{width:30px;height:30px}
+.crow small{font-size:12px;font-weight:800;color:#444}.czs{display:flex;flex-wrap:wrap;gap:4px;margin-top:2px}
+.cz{display:inline-flex;align-items:center;gap:5px;border-radius:999px;background:#e5f6e8;padding:1px 8px 1px 2px;font-size:13px;font-weight:800;color:#1b5e20}
+.cz b{background:#2e7d32;color:#fff;border-radius:999px;padding:1px 7px;font-size:12px}.cz.q{background:#ffe9cc;color:#a04f00}.cz.q b{background:#ef6c00}
 /* barre « enregistrer » */
 .savebar{position:fixed;left:0;right:0;bottom:calc(44px + var(--safe-b));z-index:15;background:#fff8e1;border-top:2px solid #f3d27a;padding:10px 12px;display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;font-weight:700;font-size:14px}
 .savebar .btn{padding:11px 14px;font-size:15px;width:auto}
@@ -333,8 +359,8 @@ label.check input{width:22px;height:22px;accent-color:var(--green-dark)}
 <div id="app"></div>
 <div id="status" class="hidden"><i></i><span id="status-txt">…</span><span class="sp"></span></div>
 <script src="vendor/supabase.js"></script>
-<script src="config.js?v=14"></script>
-<script src="app.js?v=14"></script>
-<script>if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js?v=14");</script>
+<script src="config.js?v=15"></script>
+<script src="app.js?v=15"></script>
+<script>if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js?v=15");</script>
 </body>
 </html>
