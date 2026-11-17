@@ -1,11 +1,10 @@
--- ASDJ - Tools, version 11 : révision « dès que possible » (rendez-vous) ou « attendre un kilométrage ».
+-- ASDJ - Tools, version 12 : notifications sur les téléphones + rendez-vous pour le CT et la pollution.
 -- Peut être relancé sans danger.
 begin;
-alter table public.machines add column if not exists rev_mode text not null default '';
-alter table public.machines add column if not exists rev_cible_km integer;
-alter table public.machines add column if not exists rev_rdv date;
-alter table public.machines add column if not exists rev_garage text not null default '';
-alter table public.machines add column if not exists rev_choix text not null default '';
+alter table public.machines add column if not exists ct_rdv date;
+alter table public.machines add column if not exists ct_lieu text not null default '';
+alter table public.machines add column if not exists pol_rdv date;
+alter table public.machines add column if not exists pol_lieu text not null default '';
 
 create or replace function public._ecrire(p_id text, p_champ text, p_valeur text, p_ts timestamptz, p_annule bigint)
 returns public.machines
@@ -18,7 +17,7 @@ begin
   if p_annule is null and dernier is not null and dernier >= p_ts then return r; end if;
   if p_annule is not null and dernier is not null and dernier >= p_ts then p_ts := dernier + interval '1 millisecond'; end if;
   typ := case when p_champ in ('equipe', 'km', 'rev_km', 'ct_mois', 'pol_mois', 'rev_mois', 'rev_cible_km') then 'int'
-              when p_champ in ('depuis', 'controle', 'depose_le', 'recupere_le', 'pret_le', 'km_le', 'ct_le', 'pol_le', 'rev_le', 'ct_avant', 'pol_avant', 'rev_avant', 'mise_circulation', 'rev_rdv') then 'date'
+              when p_champ in ('depuis', 'controle', 'depose_le', 'recupere_le', 'pret_le', 'km_le', 'ct_le', 'pol_le', 'rev_le', 'ct_avant', 'pol_avant', 'rev_avant', 'mise_circulation', 'rev_rdv', 'ct_rdv', 'pol_rdv') then 'date'
               when p_champ = 'actif' then 'boolean' else 'text' end;
   v := case when typ = 'text' then coalesce(p_valeur, '') else nullif(p_valeur, '') end;
   ancien := to_jsonb(r) ->> p_champ;
@@ -42,7 +41,8 @@ begin
                      'depose_par','depose_le','recupere_par','recupere_le','photo','pret_a','pret_le',
                      'plaque','type_vehicule','km','km_le','ct_le','ct_mois','pol_le','pol_mois','rev_le','rev_km','rev_mois','probleme_type',
                      'ct_avant','pol_avant','rev_avant','mise_circulation',
-                     'rev_mode','rev_cible_km','rev_rdv','rev_garage','rev_choix') then
+                     'rev_mode','rev_cible_km','rev_rdv','rev_garage','rev_choix',
+                     'ct_rdv','ct_lieu','pol_rdv','pol_lieu') then
     raise exception 'champ interdit: %', p_champ;
   end if;
   if p_champ in ('famille', 'actif', 'plaque', 'type_vehicule', 'ct_mois', 'pol_mois', 'rev_mois') and not public.est_chef() then
@@ -55,6 +55,46 @@ grant execute on function public.maj_champ(text, text, text, timestamptz) to aut
 
 
 
+
+-- téléphones abonnés aux notifications (chacun gère les siens)
+create table if not exists public.push_abonnements (
+  endpoint text primary key,
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  p256dh text not null,
+  auth text not null,
+  appareil text not null default '',
+  cree_le timestamptz not null default now()
+);
+alter table public.push_abonnements enable row level security;
+revoke all on public.push_abonnements from anon, authenticated;
+grant select, insert, delete on public.push_abonnements to authenticated;
+drop policy if exists "chacun voit ses telephones" on public.push_abonnements;
+drop policy if exists "chacun ajoute ses telephones" on public.push_abonnements;
+drop policy if exists "chacun retire ses telephones" on public.push_abonnements;
+create policy "chacun voit ses telephones" on public.push_abonnements for select to authenticated using (user_id = auth.uid());
+create policy "chacun ajoute ses telephones" on public.push_abonnements for insert to authenticated with check (user_id = auth.uid() and public.acces_ok());
+create policy "chacun retire ses telephones" on public.push_abonnements for delete to authenticated using (user_id = auth.uid());
+
+-- ce que le robot a déjà envoyé (pour le rythme : tous les 2 jours, 2 fois par jour…)
+create table if not exists public.push_journal (
+  id bigint generated always as identity primary key,
+  cle text not null,
+  le timestamptz not null default now()
+);
+create index if not exists push_journal_cle_idx on public.push_journal (cle, le desc);
+alter table public.push_journal enable row level security;
+revoke all on public.push_journal from anon, authenticated;
+
+-- réglages : la clé PUBLIQUE des notifications (la clé secrète reste dans les Secrets GitHub)
+create table if not exists public.reglages (cle text primary key, valeur text not null default '');
+alter table public.reglages enable row level security;
+revoke all on public.reglages from anon, authenticated;
+
+create or replace function public.push_cle_publique() returns text
+language sql stable security definer set search_path = '' as $$ select valeur from public.reglages where cle = 'vapid_public' $$;
+revoke all on function public.push_cle_publique() from public, anon;
+grant execute on function public.push_cle_publique() to authenticated;
+
 commit;
 notify pgrst, 'reload schema';
-select 'version 11 en place' as resultat;
+select 'version 12 en place' as resultat;
