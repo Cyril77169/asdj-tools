@@ -1,7 +1,7 @@
-// Robot « Notifications » : chaque matin vers 6 h (et à midi pour l'urgent), envoie UNE notification groupée
+// Robot « Notifications » : chaque matin vers 6 h 30 (et à midi pour l'urgent), envoie UNE notification groupée
 // aux téléphones abonnés quand une échéance de véhicule approche. Lancé par .github/workflows/notifs.yml.
-// Rythme : 2 semaines avant → tous les 2 jours à 6 h ; à 2 jours ou moins (ou dépassé) → 6 h ET midi ;
-// rendez-vous pris → plus rien jusqu'au jour J (6 h : « rendez-vous aujourd'hui ») ; RDV passé → tous les 2 jours.
+// Rythme : 2 semaines avant → tous les 2 jours à 6 h 30 ; à 2 jours ou moins (ou dépassé) → 6 h 30 ET midi ;
+// rendez-vous pris → plus rien jusqu'au jour J (6 h 30 : « rendez-vous aujourd'hui ») ; RDV passé → tous les 2 jours.
 
 const ECH = [
   { k: "ct", nom: "CT", le: "ct_le", mois: "ct_mois" },
@@ -70,7 +70,7 @@ export function message(items) {
 export function creneauParis(date) {
   const p = Object.fromEntries(new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(date).map(x => [x.type, x.value]));
   const h = +p.hour + +p.minute / 60, today = `${p.year}-${p.month}-${p.day}`;
-  return { today, creneau: h >= 5.7 && h < 9 ? "matin" : h >= 11.7 && h < 14 ? "midi" : null };
+  return { today, creneau: h >= 6.25 && h < 9.5 ? "matin" : h >= 11.7 && h < 14 ? "midi" : null };
 }
 
 /* ---------- lancement par le robot ---------- */
@@ -89,7 +89,7 @@ async function main() {
   const PUB = ecdh.getPublicKey().toString("base64url");
   await sql(`insert into public.reglages (cle, valeur) values ('vapid_public', ${q(PUB)}) on conflict (cle) do update set valeur = excluded.valeur`);
   const { today, creneau } = creneauParis(new Date());
-  if (!creneau && !TEST) { console.log("Pas l'heure d'un envoi (6 h ou midi, heure de Paris)."); return; }
+  if (!creneau && !TEST) { console.log("Pas l'heure d'un envoi (6 h 30 ou midi, heure de Paris)."); return; }
   const slotKey = `creneau|${creneau}|${today}`;
   const abos = await sql("select endpoint, p256dh, auth from public.push_abonnements");
   if (!abos.length) { console.log("Aucun téléphone abonné."); return; }

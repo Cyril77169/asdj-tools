@@ -1,10 +1,10 @@
 name: Notifications
-# Chaque matin vers 6 h et à midi (heure de Paris). Le robot est lancé deux fois par créneau
+# Chaque matin vers 6 h 30 et à midi (heure de Paris). Le robot est lancé deux fois par créneau
 # (heure d'été / heure d'hiver) ; il vérifie lui-même l'heure de Paris et n'envoie qu'une fois.
 on:
   schedule:
-    - cron: "45 3 * * *"
-    - cron: "45 4 * * *"
+    - cron: "20 4 * * *"
+    - cron: "20 5 * * *"
     - cron: "45 9 * * *"
     - cron: "45 10 * * *"
   workflow_dispatch:

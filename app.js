@@ -1,7 +1,7 @@
 /* ASDJ - Tools : suivi du matériel par famille et par équipe.
    Données partagées entre les comptes connectés (Supabase), copie locale + file d'attente pour le hors ligne. */
 "use strict";
-const APP_V = 12;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
+const APP_V = 13;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
 const CFG = window.APP_CONFIG;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1274,8 +1274,8 @@ async function loadParams() {
   const box = $("#push-box"); if (!box) return;
   const st = await pushEtat(), b = $("#push-box"); if (!b) return;
   const T = {
-    actif: `<p class="mq">✅ <b>Activées</b> sur ce téléphone.</p><p class="muted">Tu reçois les rappels des véhicules vers 6 h (et à midi si c'est urgent).</p><button class="btn light" data-act="push-off">Désactiver sur ce téléphone</button>`,
-    inactif: `<p class="mq">Reçois les rappels des véhicules (CT, pollution, révision) même quand l'appli est fermée : vers 6 h, et aussi à midi quand c'est urgent.</p><button class="btn" data-act="push-on">🔔 Recevoir les alertes sur ce téléphone</button>`,
+    actif: `<p class="mq">✅ <b>Activées</b> sur ce téléphone.</p><p class="muted">Tu reçois les rappels des véhicules vers 6 h 30 (et à midi si c'est urgent).</p><button class="btn light" data-act="push-off">Désactiver sur ce téléphone</button>`,
+    inactif: `<p class="mq">Reçois les rappels des véhicules (CT, pollution, révision) même quand l'appli est fermée : vers 6 h 30, et aussi à midi quand c'est urgent.</p><button class="btn" data-act="push-on">🔔 Recevoir les alertes sur ce téléphone</button>`,
     refuse: `<p class="mq">⛔ Les notifications sont <b>bloquées</b> pour l'appli sur ce téléphone.</p><p class="muted">Pour les débloquer : réglages du téléphone → Notifications → ${isIOS() ? "ASDJ - Tools" : "Chrome → cyril77169.github.io"} → Autoriser. Puis reviens ici.</p>`,
     "ios-ecran": `<p class="mq">Sur iPhone, il faut d'abord <b>ajouter l'appli à l'écran d'accueil</b> : dans Safari, bouton Partager → « Sur l'écran d'accueil » → Ajouter.</p><p class="muted">Ensuite, ouvre l'appli avec la nouvelle icône et reviens ici.</p>`,
     nonsupporte: `<p class="muted">Ce téléphone ou ce navigateur ne sait pas recevoir de notifications. Sur Android, utilise Chrome ; sur iPhone, l'icône de l'écran d'accueil.</p>`,
