@@ -227,7 +227,7 @@ body.noscroll{overflow:hidden}
 .acc{display:flex;align-items:center;gap:8px;padding:12px 0;border-bottom:1px solid var(--line);position:relative}
 .acc:last-child{border-bottom:0}.acc .nm{flex:1}.acc .nm b{font-size:16px}
 .role{font-size:12px;font-weight:800;padding:2px 8px;border-radius:999px}
-.role.chef{background:#e5f6e8;color:#1b6b2e}.role.eq{background:#fff1d6;color:#8a5a00}.role.off{background:#ffe1df;color:#8a1c14}
+.role.chef{background:#e5f6e8;color:#1b6b2e}.role.eq{background:#fff1d6;color:#8a5a00}.role.as{background:#ede4ff;color:#5b3aa8}.role.off{background:#ffe1df;color:#8a1c14}
 .lock{display:flex;gap:8px;align-items:center;background:#f2f2f4;color:#555;border-radius:12px;padding:10px 12px;font-size:14px;font-weight:600;margin:6px 0}
 .btn.dis{background:#e9e9ec!important;color:#9a9aa0!important;cursor:default}
 .inp:disabled{background:#f2f2f4;color:#9a9aa0}
@@ -290,7 +290,7 @@ body.noscroll{overflow:hidden}
 .gtile small{display:block;color:#555;font-size:12px;font-weight:800;line-height:1.15}.gtile b{font-size:22px;color:#1b5e20;line-height:1.1;word-break:break-word}
 .gtile.vide b{color:#a04f00;font-size:15px}
 .sz{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.sz button{min-width:48px;border:2px solid #dfe7df;background:#fff;border-radius:12px;padding:9px 6px;font-weight:800;font-size:15px;font-family:inherit;cursor:pointer;color:inherit}
-.sz button.on{background:#2e7d32;border-color:#2e7d32;color:#fff}
+.cadre{width:100%;aspect-ratio:4/3;border-radius:12px;overflow:hidden;background:repeating-conic-gradient(#eef2ee 0 25%,#fff 0 50%) 0 0/20px 20px;touch-action:none;cursor:grab;outline:2px solid #2e7d32}.cadre canvas{width:100%;height:100%;display:block}.cdrow{display:flex;align-items:center;gap:8px;margin:6px 0}.cdrow input{flex:1;accent-color:#2e7d32}.cdrow b{min-width:44px;text-align:right;font-size:13px}.cdbtns{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px;margin-top:6px}.cdbtns .btn{padding:9px 4px;font-size:13px}.seg.three{grid-template-columns:1fr 1fr 1fr}.seg.three button{font-size:13.5px;padding:10px 2px;gap:3px;white-space:nowrap}.seg.three .due{padding:1px 6px;font-size:11px}.sh2 h3{margin:16px 2px 8px;font-size:13px;font-weight:800;letter-spacing:.02em;color:#2e5d32;text-transform:uppercase}.statbtn{display:flex;align-items:center;justify-content:space-between;width:100%;border:0;background:#fff;box-shadow:var(--shadow);border-radius:14px;padding:12px 14px;font:800 15px inherit;font-family:inherit;color:#1b5e20;margin:0 0 10px;cursor:pointer}.statbtn span{font-weight:700;font-size:13px;color:var(--muted)}.ptitle{margin:4px 2px 8px;font-size:15px}.ownrow{display:grid;grid-template-columns:1fr 52px;gap:8px;align-items:stretch}.ownbtn{border:0;border-radius:16px;background:#fff;box-shadow:var(--shadow);font-size:22px;font-weight:800;color:#2e7d32;cursor:pointer}.ownpick,.ownlist{display:flex;flex-direction:column;gap:8px;margin:8px 0}.ownlist{max-height:46vh;overflow:auto}.ownpick button,.ownlist button{border:2px solid #dfe7df;background:#fff;border-radius:12px;padding:10px 12px;font-weight:700;font-size:15px;font-family:inherit;cursor:pointer;color:inherit;text-align:left}.ownlist button span{font-weight:500;color:var(--muted)}.ownlist button small{display:block;font-size:12px;color:var(--muted);font-weight:600}.ownpick button.on,.ownlist button.on{background:#2e7d32;border-color:#2e7d32;color:#fff}.ownlist button.on span,.ownlist button.on small{color:#e8f5e9}.sz button.on{background:#2e7d32;border-color:#2e7d32;color:#fff}
 main.compact{padding-top:10px}
 .crow{display:flex;gap:10px;align-items:center;background:#fff;border-radius:12px;box-shadow:var(--shadow);padding:6px 10px;margin-bottom:6px}
 .ic2{width:40px;height:40px;border-radius:10px;background:#eef5ec;display:grid;place-items:center;flex:none}.ic2 svg{width:30px;height:30px}
@@ -359,8 +359,8 @@ label.check input{width:22px;height:22px;accent-color:var(--green-dark)}
 <div id="app"></div>
 <div id="status" class="hidden"><i></i><span id="status-txt">…</span><span class="sp"></span></div>
 <script src="vendor/supabase.js"></script>
-<script src="config.js?v=17"></script>
-<script src="app.js?v=17"></script>
-<script>if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js?v=17");</script>
+<script src="config.js?v=18"></script>
+<script src="app.js?v=18"></script>
+<script>if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js?v=18");</script>
 </body>
 </html>

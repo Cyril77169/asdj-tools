@@ -1,7 +1,7 @@
 /* ASDJ - Tools : suivi du matériel par famille et par équipe.
    Données partagées entre les comptes connectés (Supabase), copie locale + file d'attente pour le hors ligne. */
 "use strict";
-const APP_V = 17;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
+const APP_V = 18;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
 const CFG = window.APP_CONFIG;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -118,6 +118,10 @@ let supa = null, USER = null;
 let ROLE = (() => { try { return localStorage.getItem("asdj_role") || ""; } catch (e) { return ""; } })();   // chef | equipier | coupe
 let PAUSE = "";      // frein : heure de fin de pause (équipier)
 const isChef = () => ROLE === "chef";
+const isAssist = () => ROLE === "assistante";
+const voitTenues = () => isChef() || isAssist();   // tenues : chefs + Assistante
+const ROLE_NOM = r => r === "chef" ? "Chef" : r === "assistante" ? "Assistante" : "Équipier";
+const ROLE_CL = r => r === "chef" ? "chef" : r === "assistante" ? "as" : "eq";
 try {
   const c = JSON.parse(localStorage.getItem(LS_CACHE) || "null");
   if (c) { S.machines = c.m || {}; S.equipes = c.e || {}; S.events = c.ev || []; S.annul = c.an || {}; S.membres = c.mb || {}; S.cacheAt = c.at || 0; }
@@ -531,18 +535,26 @@ function viewHome() {
     return `<a class="tile" href="#/famille/${f.id}"><span class="ic" style="background:${fc(f.id)}">${ICONS[f.id]}</span>
       <h2>${esc(f.nom)}</h2><span class="n">${l.length} machine${l.length > 1 ? "s" : ""}</span>${barHTML(l)}${dotsHTML(l, URGENTS)}</a>`;
   }).join("");
-  const teams = teamNums();
   return header("ASDJ - Tools", "Au service des jardins", { home: true, right: GEAR() }) +
     `<main>${segHTML("m")}${alertBandHTML(false)}<input class="search" id="home-search" type="search" placeholder="🔍 Code, modèle, chef, type de machine…" autocomplete="off">
     ${summaryHTML(all, "#/tout?")}
     <div class="tiles">${tiles}</div>
-    ${isChef() ? `<div class="duo"><a href="#/equipes"><span class="tb-ic">${SVG.team}</span><span>Les équipes<small>Tout voir</small></span></a><a href="#/tenues"><span class="tb-ic">${TENUE_IC.tshirt}</span><span>Tenues<small>Tailles · Cyril et Nico</small></span></a></div>`
-      : `<a class="sechead" href="#/equipes"><span class="tb-ic">${SVG.team}</span><b>Les équipes</b><span class="sp"></span><small>Tout voir</small>${SVG.chev}</a>`}
-    <div class="tgrid">${teams.map(n => teamCard(n, all)).join("")}</div>
     <a class="allband" href="#/tout"><span class="tb-ic">${SVG.list}</span><span class="tb-txt"><b>Toutes les machines</b><small>${all.length} machines</small></span><span class="tb-chev">${SVG.chev}</span></a>
     </main>`;
 }
 
+function viewHomeEquipes(q) {
+  const all = actives(), dep = all.filter(m => m.equipe == null);
+  const txt = (q.get("q") || "").trim();
+  return header("ASDJ - Tools", "Au service des jardins", { home: true, right: GEAR() }) +
+    `<main>${segHTML("e")}${alertBandHTML(false)}
+    <div class="sh2"><h3>Chefs d'équipe</h3></div>
+    <div class="tgrid">${teamNums().map(n => teamCard(n, all)).join("")}
+      <a class="tcard" href="#/equipe/depot" style="--c:var(--s-disponible);background:linear-gradient(90deg,var(--s-disponible) 0 100%) top/100% 7px no-repeat,#fff"><span class="tnum" style="background:var(--s-disponible)">D</span><b>Dépôt</b><small>${dep.length} machine${dep.length > 1 ? "s" : ""}</small><span class="tok" style="color:#1565c0">au dépôt ou en réparation</span></a></div>
+    ${isChef() ? `<div class="addbar"><button class="btn light" data-act="team-add">+ Ajouter une équipe</button></div>` : ""}
+    ${voitTenues() ? `<div class="sh2"><h3>Personnel</h3></div>${persListHTML(txt)}` : ""}
+    </main>`;
+}
 let famSort = "num";
 function statusChips(list, sel, base) {
   const c = countBy(list), sep = base.includes("?") ? "&" : "?";
@@ -720,7 +732,7 @@ function viewMachine(id) {
 
     <div class="sect"><h3>Photo</h3><div class="photo" id="photo-box" data-main="${esc(id)}">${m.photo || pendingPhoto(m.id, "main") ? "Chargement de la photo…" : "Pas encore de photo"}</div>
       <div class="pickrow"><label class="btn light">📷 Prendre une photo<input type="file" accept="image/*" capture="environment" id="photo-cam" hidden></label>
-      <label class="btn light">🖼️ Galerie<input type="file" accept="image/*" id="photo-input" hidden></label></div></div>
+      <label class="btn light">🖼️ Galerie<input type="file" accept="image/*" id="photo-input" hidden></label></div>${m.photo || pendingPhoto(m.id, "main") || latestLocal[m.id] ? `<button class="btn light" style="margin-top:8px;width:100%" data-act="recadrer">✂️ Recadrer la photo actuelle</button>` : ""}</div>
 
     <div class="sect"><h3>Historique : pannes, réparations, prêts</h3>${eventsHTML(id)}</div>
 
@@ -929,16 +941,16 @@ function viewAcces() {
   if (!isChef()) return viewHome();
   return header("Accès à l'appli", "Cyril et Nico seulement") + `<main><div class="sect"><h3>Comptes</h3><div id="acc-list">${ACC ? accHTML() : `<p class="muted">Chargement…</p>`}</div></div>
     <div class="sect"><p class="muted" style="margin:0">Couper l'accès déconnecte la personne à la prochaine ouverture de l'appli. Rien n'est effacé, et on peut lui rendre l'accès.</p>
-    <p class="muted" style="margin:8px 0 0">Un nouveau compte apparaît ici après sa première connexion, en Équipier.</p></div></main>`;
+    <p class="muted" style="margin:8px 0 0">Un nouveau compte apparaît ici après sa première connexion, en Équipier. Touche ⋯ pour le passer <b>Assistante</b> (équipier + tenues).</p></div></main>`;
 }
 function accHTML() {
   if (!ACC.length) return `<p class="muted">Aucun compte.</p>`;
   return ACC.map(m => {
     const chef = m.role === "chef", pause = m.pause ? hhmm(new Date(m.pause)) : "";
-    const badge = !m.actif ? `<span class="role off">Accès coupé</span>` : `<span class="role ${chef ? "chef" : "eq"}">${chef ? "Chef" : "Équipier"}</span>`;
+    const badge = !m.actif ? `<span class="role off">Accès coupé</span>` : `<span class="role ${ROLE_CL(m.role)}">${ROLE_NOM(m.role)}</span>`;
     const info = chef ? "" : ` <span class="muted">· ${m.aujourdhui} modif${m.aujourdhui > 1 ? "s" : ""} aujourd'hui${pause ? ` · ⏸️ en pause jusqu'à ${pause}` : ""}</span>`;
     const right = chef ? (m.nom === "Cyril" ? `<span class="muted">Propriétaire</span>` : "")
-      : `<button class="dots" data-act="dots" data-kind="acc" data-uid="${esc(m.id)}" data-actif="${m.actif ? 1 : 0}" data-pause="${esc(pause)}" aria-label="Options">⋯</button>`;
+      : `<button class="dots" data-act="dots" data-kind="acc" data-uid="${esc(m.id)}" data-actif="${m.actif ? 1 : 0}" data-pause="${esc(pause)}" data-role="${esc(m.role)}" aria-label="Options">⋯</button>`;
     return `<div class="acc"><div class="nm"><b>${esc(m.nom || "(sans prénom)")}</b><br>${badge}${info}</div>${right}</div>`;
   }).join("");
 }
@@ -953,7 +965,9 @@ function askAcces(uid, action) {
   const m = (ACC || []).find(x => x.id === uid); if (!m) return;
   const T = {
     couper: { t: `Couper l'accès ${deNom(m.nom)} ?`, h: `Es-tu sûr de vouloir couper l'accès ${esc(deNom(m.nom))} ? ${esc(m.nom)} ne pourra plus rien voir ni modifier. Ses modifs passées restent dans l'historique.</p><p class="muted">Tu pourras lui rendre l'accès quand tu veux.`, ok: "Oui, couper", c: "#c62828" },
-    rendre: { t: `Rendre l'accès à ${m.nom} ?`, h: `${esc(m.nom)} pourra de nouveau utiliser l'appli, en Équipier.`, ok: "Oui, rendre l'accès" },
+    rendre: { t: `Rendre l'accès à ${m.nom} ?`, h: `${esc(m.nom)} pourra de nouveau utiliser l'appli, en ${ROLE_NOM(m.role)}.`, ok: "Oui, rendre l'accès" },
+    assistante: { t: `Passer ${m.nom} Assistante ?`, h: `${esc(m.nom)} gardera les droits d'un équipier (rien supprimer, pas d'annulation, pas d'accès aux comptes), et aura en plus les <b>tenues</b> complètes : voir, ajouter le personnel, noter les tailles.`, ok: "Oui, passer Assistante" },
+    equipier: { t: `Repasser ${m.nom} Équipier ?`, h: `${esc(m.nom)} ne verra plus les tenues. Le reste ne change pas.`, ok: "Oui, repasser Équipier" },
     lever_pause: { t: `Lever la pause ${deNom(m.nom)} ?`, h: `Ses modifs en attente partiront tout de suite, et le compteur repart de zéro.`, ok: "Oui, lever la pause" },
   }[action];
   openModal({ title: esc(T.t), center: true, ok: T.ok, okColor: T.c, cancel: "Non, annuler", html: `<p class="mq">${T.h}</p>`,
@@ -1001,7 +1015,7 @@ const plaqueHTML = (m, big) => `<span class="plate ${big ? "big" : ""} ${m.plaqu
 const vsc = id => `var(--s-${id})`;
 function segHTML(on) {
   const n = alertes().length;
-  return `<div class="seg"><button class="${on === "m" ? "on" : ""}" data-act="go-r" data-h="#/">🔧 Machines</button><button class="${on === "v" ? "on" : ""}" data-act="go-r" data-h="#/vehicules">🚐 Véhicules${n ? ` <span class="due late">${n}</span>` : ""}</button></div>`;
+  return `<div class="seg three"><button class="${on === "e" ? "on" : ""}" data-act="go-r" data-h="#/">👥 Équipes</button><button class="${on === "m" ? "on" : ""}" data-act="go-r" data-h="#/machines">🔧 Machines</button><button class="${on === "v" ? "on" : ""}" data-act="go-r" data-h="#/vehicules">🚐 Véhicules${n ? ` <span class="due late">${n}</span>` : ""}</button></div>`;
 }
 function alertBandHTML(detail) {
   const a = alertes(); if (!a.length) return "";
@@ -1070,7 +1084,7 @@ function viewVehicule(m) {
 
     <div class="sect"><h3>Photo</h3><div class="photo" id="photo-box" data-main="${esc(id)}">${m.photo || pendingPhoto(m.id, "main") ? "Chargement de la photo…" : "Pas encore de photo"}</div>
       <div class="pickrow"><label class="btn light">📷 Prendre une photo<input type="file" accept="image/*" capture="environment" id="photo-cam" hidden></label>
-      <label class="btn light">🖼️ Galerie<input type="file" accept="image/*" id="photo-input" hidden></label></div></div>
+      <label class="btn light">🖼️ Galerie<input type="file" accept="image/*" id="photo-input" hidden></label></div>${m.photo || pendingPhoto(m.id, "main") || latestLocal[m.id] ? `<button class="btn light" style="margin-top:8px;width:100%" data-act="recadrer">✂️ Recadrer la photo actuelle</button>` : ""}</div>
 
     <div class="sect"><h3>Historique : problèmes, réparations, contrôles</h3>${eventsHTML(id)}</div>
 
@@ -1313,10 +1327,10 @@ async function pushEtat() {
   try { const reg = await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription(); return sub ? "actif" : "inactif"; } catch (e) { return "inactif"; }
 }
 function viewParametres() {
-  const r = ROLE === "chef" ? "Chef" : "Équipier";
+  const r = ROLE_NOM(ROLE);
   return header("Paramètres", "Réglages de l'appli") + `<main>
     ${isChef() ? `<div class="sect"><h3>🔔 Notifications sur ce téléphone</h3><div id="push-box"><p class="muted">Chargement…</p></div></div>` : ""}
-    <div class="sect"><h3>👤 Mon compte</h3><p class="mq" style="margin:0"><b>${esc(myName() || "Sans prénom")}</b> · <span class="role ${ROLE === "chef" ? "chef" : "eq"}">${r}</span></p>
+    <div class="sect"><h3>👤 Mon compte</h3><p class="mq" style="margin:0"><b>${esc(myName() || "Sans prénom")}</b> · <span class="role ${ROLE_CL(ROLE)}">${r}</span></p>
       <p class="muted" style="margin:4px 0 10px">${esc((USER && USER.email) || "")}</p><button class="btn light" data-act="logout">Se déconnecter</button></div>
     ${isChef() ? `<div class="sect"><h3>🛡️ Réglages des chefs</h3><p class="muted" style="margin:0 0 8px">Visible seulement par Cyril et Nico.</p>
       <a class="setrow" href="#/activite"><span>📋</span><b>Activité et annulations</b><small>Qui a fait quoi, annuler une modif</small>${SVG.chev}</a>
@@ -1363,6 +1377,60 @@ async function pushOff(btn) {
 }
 
 /* ---------- TENUES (tailles du personnel, chefs seulement) ---------- */
+let PTAB = "m", PTAB_EFF = "m";   // onglet de la fiche d'une personne : m = matériel (d'abord), t = tenue
+const PERS_IC = `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7" r="4"/><path d="M4 21v-1a7 7 0 0 1 14 0v1"/></svg>`;
+const matsDe = n => n == null ? [] : Object.values(S.machines).filter(m => m.actif !== false && m.equipe === n);
+const ownLabel = n => n == null ? "Dépôt" : `Équipe ${n}` + (chef(n) ? ` · ${chef(n)}` : "");
+function askStatutP(id) {
+  const p = (PERS || []).find(x => x.id === id); if (!p || !isChef()) return;
+  const cur = chefDe(p), nn = Math.max(0, ...teamNums()) + 1;
+  const opt = (v, lab, sub) => `<button type="button" data-act="sz" data-v="${v}" class="${String(cur ?? "") === String(v) ? "on" : ""}">${esc(lab)}${sub ? `<small>${esc(sub)}</small>` : ""}</button>`;
+  openModal({ title: `Statut de ${esc(p.prenom)}`, center: true, ok: "Oui, changer",
+    html: `<p class="mq">Équipier, ou chef de quelle équipe ?</p><div class="ownlist" id="m-own">${opt("", "👷 Équipier", "Pas de matériel à son nom")}${teamNums().map(n => opt(n, `⭐ Chef d'équipe ${n}`, chef(n) && norm(chef(n)).trim() !== norm(p.prenom).trim() ? `Aujourd'hui : ${chef(n)} (redeviendra équipier)` : chef(n) ? "" : "Équipe sans chef")).join("")}${opt("new", `⭐ Chef d'une nouvelle équipe (${nn})`, "")}</div>`,
+    onOk: () => {
+      const on = MODAL.el.querySelector("#m-own .on"); if (!on) { $("#m-msg").innerHTML = `<div class="msg err">Choisis un statut.</div>`; return false; }
+      const v = on.dataset.v, to = v === "" ? null : v === "new" ? nn : +v;
+      if (to === cur) return true;
+      if (cur != null) setChef(cur, "");
+      if (to != null) setChef(to, p.prenom);
+      return true;
+    } });
+}
+function moveMachine(id, eq) {
+  const m = S.machines[id]; if (!m) return;
+  const ch = { equipe: eq, affectation: eq != null ? chef(eq) : "" };
+  if (["depot", "equipe"].includes(m.lieu || "depot")) ch.lieu = eq != null ? "equipe" : "depot";
+  setFields(id, ch);
+}
+const ownBusy = id => DRAFT && DRAFT.id === id && Object.keys(DRAFT.v || {}).length;
+function askOwner(id) {
+  const m = S.machines[id]; if (!m) return;
+  if (ownBusy(id)) return infoModal("Pas tout de suite", `<p class="mq">Des corrections de <b>${esc(disp(m))}</b> ne sont pas encore validées sur sa fiche. Valide-les d'abord, puis recommence.</p>`);
+  const opts = [...teamNums(), null];
+  openModal({ title: `${esc(disp(m))} : à qui ?`, center: true, ok: "Oui, changer",
+    html: `<p class="mq">Aujourd'hui : <b>${esc(ownLabel(m.equipe))}</b>. Choisis le nouveau propriétaire.</p><div class="ownpick" id="m-own">${opts.map(n => `<button type="button" data-act="sz" data-v="${n == null ? "" : n}" class="${(m.equipe ?? null) === n ? "on" : ""}">${esc(ownLabel(n))}</button>`).join("")}</div>`,
+    onOk: () => {
+      const on = MODAL.el.querySelector("#m-own .on"); if (!on) { $("#m-msg").innerHTML = `<div class="msg err">Choisis un propriétaire.</div>`; return false; }
+      const eq = on.dataset.v === "" ? null : +on.dataset.v;
+      if ((m.equipe ?? null) === eq) return true;
+      if (ownBusy(id)) { $("#m-msg").innerHTML = `<div class="msg err">Une correction de cette machine est en cours ailleurs : valide-la d'abord.</div>`; return false; }
+      moveMachine(id, eq); return true;
+    } });
+}
+function askOwnAdd(n) {
+  const pool = () => Object.values(S.machines).filter(m => m.actif !== false && m.equipe !== n);
+  const list = q => { const t = q.trim(); return pool().filter(m => !t || fuzzyScore(t, `${disp(m)} | ${m.id} | ${m.modele} | ${(FAM[m.famille] || {}).nom || "véhicule"}`) >= 0).sort((a, b) => natural(disp(a), disp(b))).slice(0, 40); };
+  const rows = q => list(q).map(m => `<button type="button" data-act="sz" data-v="${esc(m.id)}"><b>${esc(disp(m))}</b> <span>${esc(m.modele || "")}</span><small>${esc(ownLabel(m.equipe))}</small></button>`).join("") || `<p class="muted">Rien trouvé.</p>`;
+  openModal({ title: `Attribuer à ${esc(chef(n) || "l'équipe " + n)}`, center: true, ok: "Oui, attribuer",
+    html: `<input class="inp" id="m-own-q" type="search" placeholder="🔍 Numéro, modèle, type…" autocomplete="off"><div class="ownlist" id="m-own">${rows("")}</div>`,
+    onOpen: d => { const i = d.querySelector("#m-own-q"); i.addEventListener("input", () => { d.querySelector("#m-own").innerHTML = rows(i.value); }); },
+    onOk: () => {
+      const on = MODAL.el.querySelector("#m-own .on"); if (!on) { $("#m-msg").innerHTML = `<div class="msg err">Touche la machine à lui attribuer.</div>`; return false; }
+      const id = on.dataset.v, m = S.machines[id]; if (!m) return false;
+      if (ownBusy(id)) { $("#m-msg").innerHTML = `<div class="msg err">Des corrections de ${esc(disp(m))} ne sont pas encore validées sur sa fiche : valide-les d'abord.</div>`; return false; }
+      moveMachine(id, n); return true;
+    } });
+}
 /* icônes des vêtements (dessins originaux, mêmes couleurs sur Android et iPhone) */
 const TENUE_IC = {
   tshirt: `<svg viewBox="0 0 64 64"><path d="M22 8l-14 7 5 12 6-3v32h26V24l6 3 5-12-14-7c-1 5-5 8-10 8s-9-3-10-8z" fill="#4fc3f7" stroke="#0277bd" stroke-width="2.5" stroke-linejoin="round"/></svg>`,
@@ -1401,32 +1469,46 @@ async function loadPersonnel(rerender) {
   try { const rows = await fetchAll("personnel", "id"); PERS = rows; PERS_ERR = ""; } catch (e) { PERS_ERR = "Tenues indisponibles pour le moment."; }
   if (rerender) softRender();
 }
-const persActifs = () => (PERS || []).filter(p => p.actif !== false).sort((a, b) => natural(a.prenom, b.prenom));
+const persActifs = () => (PERS || []).filter(p => p.actif !== false).sort((a, b) => { const x = chefDe(a), y = chefDe(b); return (x == null) - (y == null) || (x != null && y != null ? x - y : 0) || natural(a.prenom, b.prenom); });
 const manque = p => TENUES.filter(t => !p[t.k]).length;
 function viewTenues(q) {
-  if (!isChef()) return viewHome();
+  if (!voitTenues()) return viewHomeEquipes(q);
   const txt = (q.get("q") || "").trim();
-  const all = persActifs(), list = txt ? all.filter(p => fuzzyScore(txt, `${p.prenom} | ${persEq(p)}`) >= 0) : all;
-  const card = p => { const n = manque(p); return `<a class="pp" href="#/tenue/${encodeURIComponent(p.id)}"><span class="av2" style="background:${persCol(p)}">${esc((p.prenom || "?")[0].toUpperCase())}</span><b>${esc(p.prenom)}</b>${persEq(p) ? `<small>${esc(persEq(p))}</small>` : ""}<span class="${n ? "ko2" : "ok2"}">${n ? `${n} à remplir` : "Complet"}</span></a>`; };
-  return header("Tenues", "Tailles du personnel · Cyril et Nico") + `<main>
+  return header("Personnel", isAssist() ? "Matériel et tenues" : "Matériel et tenues · Cyril et Nico") + `<main>${persListHTML(txt)}</main>`;
+}
+function persListHTML(txt) {
+  const all = persActifs(), list = txt ? all.filter(p => fuzzyScore(txt, `${p.prenom} | ${persEq(p) || "équipier"}`) >= 0) : all;
+  const card = p => { const eq = chefDe(p), nm = matsDe(eq).length; return `<a class="pp" href="#/tenue/${encodeURIComponent(p.id)}"><span class="av2" style="background:${persCol(p)}">${esc((p.prenom || "?")[0].toUpperCase())}</span><b>${esc(p.prenom)}</b><small>${eq != null ? esc(persEq(p)) : "Équipier"}</small>${eq != null ? `<span class="ok2">🧰 ${nm} machine${nm > 1 ? "s" : ""}</span>` : ""}</a>`; };
+  return `
     <input class="search" id="tenue-search" type="search" placeholder="🔍 Chercher une personne…" autocomplete="off" value="${esc(txt)}">
     ${PERS == null ? `<p class="muted">${esc(PERS_ERR || "Chargement…")}</p>` : `<div class="ppl">${list.map(card).join("") || `<div class="empty" style="grid-column:1/-1">${all.length ? "Personne trouvé." : "Personne pour l'instant : ajoute le personnel avec le bouton ci-dessous."}</div>`}</div>`}
-    <div class="duo2"><button class="btn light" data-act="pers-add">+ Ajouter une personne</button><button class="btn" data-act="go" data-h="#/compteur">📊 Compteur des tailles</button></div></main>`;
+    <div class="duo2"><button class="btn light" data-act="pers-add">+ Ajouter une personne</button><button class="btn light" data-act="go" data-h="#/compteur">👕 Compteur des tenues</button></div>`;
 }
 function viewTenue(id) {
-  if (!isChef()) return viewHome();
+  if (!voitTenues()) return viewHome();
   const p = (PERS || []).find(x => x.id === id);
   if (!p) return header("Tenue", "") + `<main><p class="muted">${esc(PERS == null ? (PERS_ERR || "Chargement…") : "Personne introuvable.")}</p></main>`;
-  const n = manque(p);
-  return header(p.prenom, persEq(p) ? `${persEq(p)} · Tenue` : "Tenue") + `<main>
-    <div class="ph"><span class="av2" style="background:rgba(255,255,255,.25);margin:0">${esc((p.prenom || "?")[0].toUpperCase())}</span><div><b>${esc(p.prenom)}</b><small>${persEq(p) ? `${esc(persEq(p))} · ` : ""}${8 - n} taille${8 - n > 1 ? "s" : ""} sur 8</small></div></div>
+  const n = manque(p), eqn = chefDe(p);
+  const mats = matsDe(eqn);
+  if (eqn == null) PTAB_EFF = "t"; else PTAB_EFF = PTAB;
+  return header(p.prenom, eqn != null ? `${persEq(p)} · Fiche` : "Équipier · Fiche") + `<main>
+    <div class="ph"><span class="av2" style="background:rgba(255,255,255,.25);margin:0">${esc((p.prenom || "?")[0].toUpperCase())}</span><div><b>${esc(p.prenom)}</b><small>${eqn != null ? `${esc(persEq(p))} · ${mats.length} machine${mats.length > 1 ? "s" : ""}` : "Équipier"}</small></div></div>
     ${p.actif === false ? `<div class="lock">Retiré(e) de la liste.</div>` : ""}
-    <div class="gt">${TENUES.map(t => `<button class="gtile ${t.c} ${p[t.k] ? "" : "vide"}" data-act="taille" data-k="${t.k}"><span class="ic">${TENUE_IC[t.ic]}</span><span><small>${esc(t.nom)}</small><b>${esc(p[t.k] || "à remplir")}</b></span></button>`).join("")}</div>
-    <p class="muted" style="margin:8px 0">Touche une case pour changer la taille.${p.maj ? ` Dernière modif : ${esc(nomDe(p.maj_par) || "?")}, le ${frDate(String(p.maj).slice(0, 10))}.` : ""}</p>
+    ${isChef() ? `<button class="statbtn" data-act="statut-p">${eqn != null ? `⭐ Chef d'équipe ${eqn}` : "👷 Équipier"}<span>Changer ✎</span></button>` : ""}
+    ${eqn != null ? `<div class="seg ptab"><button data-act="ptab" data-v="m" class="${PTAB === "m" ? "on" : ""}">🧰 Matériel · ${mats.length}</button><button data-act="ptab" data-v="t" class="${PTAB === "t" ? "on" : ""}">👕 Tenue</button></div>` : `<h3 class="ptitle">👕 Tenue</h3>`}
+    ${PTAB_EFF === "m" ? matHTML(p, eqn, mats) : `<div class="gt">${TENUES.map(t => `<button class="gtile ${t.c} ${p[t.k] ? "" : "vide"}" data-act="taille" data-k="${t.k}"><span class="ic">${TENUE_IC[t.ic]}</span><span><small>${esc(t.nom)}</small><b>${esc(p[t.k] || "à remplir")}</b></span></button>`).join("")}</div>
+    <p class="muted" style="margin:8px 0">Touche une case pour changer la taille.${p.maj ? ` Dernière modif : ${esc(nomDe(p.maj_par) || "?")}, le ${frDate(String(p.maj).slice(0, 10))}.` : ""}</p>`}
     <div class="duo2"><button class="btn light" data-act="pers-edit">✏️ Changer le prénom</button>${p.actif === false ? `<button class="btn light" data-act="pers-actif" data-v="true">Remettre dans la liste</button>` : `<button class="btn light" data-act="pers-actif" data-v="false">Retirer de la liste</button>`}</div></main>`;
 }
+function matHTML(p, eqn, mats) {
+  if (eqn == null) return `<div class="empty" style="margin-top:6px">${esc(p.prenom)} n'est chef d'aucune équipe.<br><span class="muted">Le matériel est rangé au nom des chefs d'équipe : pour qu'il en ait, mets-le chef d'une équipe (Les équipes → ✎).</span></div>`;
+  const fams = [...FAMILLES, { id: "vehicule", nom: "Véhicules" }].map(f => ({ f, l: mats.filter(m => m.famille === f.id).sort((a, b) => natural(a.id, b.id)) })).filter(x => x.l.length);
+  return `<p class="muted" style="margin:6px 0">Matériel de l'<b>équipe ${eqn}</b>. ⇄ = le donner à un autre chef ou le remettre au dépôt. C'est relié : la fiche de la machine change aussi.</p>
+    ${fams.map(({ f, l }) => `<div class="group-h">${f.id === "vehicule" ? "" : `<span style="color:${fc(f.id)}">${ICONS[f.id]}</span>`}${esc(f.nom)} · ${l.length}</div><div class="list">${l.map(m => `<div class="ownrow">${cardHTML(m)}<button class="ownbtn" data-act="owner" data-id="${esc(m.id)}" aria-label="Changer de propriétaire">⇄</button></div>`).join("")}</div>`).join("") || `<div class="empty">Aucun matériel pour l'instant.</div>`}
+    <button class="btn light" style="margin-top:12px" data-act="own-add" data-n="${eqn}">+ Lui attribuer du matériel</button>`;
+}
 function viewCompteur() {
-  if (!isChef()) return viewHome();
+  if (!voitTenues()) return viewHome();
   const all = persActifs();
   const rows = TENUES.map(t => {
     const opts = taillesDe(t.k), c = {}; let vide = 0;
@@ -1499,7 +1581,8 @@ function render(nav) {
   const r = parseRoute(); const [a, b] = r.parts;
   if (nav && DRAFT && !(a === "machine" && b === DRAFT.id)) { /* on garde le brouillon pour le retour sur la fiche */ }
   let html;
-  if (!a) html = viewHome();
+  if (!a) html = viewHomeEquipes(r.q);
+  else if (a === "machines") html = viewHome();
   else if (a === "famille") html = viewFamille(b, r.q);
   else if (a === "equipes") html = viewEquipes();
   else if (a === "equipe") html = viewEquipe(b, r.q);
@@ -1521,7 +1604,7 @@ function render(nav) {
   if (a === "activite" && isChef() && (nav || ACT.key !== actFilter().key)) loadActivite(true);
   if (a === "acces" && isChef() && nav) loadAcces();
   if (a === "parametres") loadParams();
-  if (["tenues", "tenue", "compteur"].includes(a) && isChef() && (nav || PERS == null)) loadPersonnel(true);
+  if ((!a || ["tenues", "tenue", "compteur"].includes(a)) && voitTenues() && (nav || PERS == null)) loadPersonnel(true);
   if (a === "equipe") showPhotos();
   if (a === "tout" && focusSearch) { focusSearch = false; const s = $("#search"); if (s) { s.focus(); const n = s.value.length; try { s.setSelectionRange(n, n); } catch (_) {} } }
   pendingRender = false;
@@ -1625,7 +1708,8 @@ document.addEventListener("click", async e => {
     if (k === "row") menu = `<button data-act="undo-one" data-hid="${esc(t.dataset.hid)}">↩️ Annuler cette modif</button>`;
     if (k === "all") { const f = actFilter(); menu = `<button data-act="undo-all">↩️ Tout annuler (${esc(f.par ? nomDe(f.par) : "tout le monde")}, ${esc(f.label)})</button>`; }
     if (k === "acc") menu = (t.dataset.actif === "1" ? `<button data-act="acc" data-a="couper" data-uid="${esc(t.dataset.uid)}">⛔ Couper l'accès</button>` : `<button class="n" data-act="acc" data-a="rendre" data-uid="${esc(t.dataset.uid)}">✅ Rendre l'accès</button>`)
-      + (t.dataset.pause ? `<button class="n" data-act="acc" data-a="lever_pause" data-uid="${esc(t.dataset.uid)}">▶️ Lever la pause</button>` : "");
+      + (t.dataset.pause ? `<button class="n" data-act="acc" data-a="lever_pause" data-uid="${esc(t.dataset.uid)}">▶️ Lever la pause</button>` : "")
+      + (t.dataset.role === "assistante" ? `<button class="n" data-act="acc" data-a="equipier" data-uid="${esc(t.dataset.uid)}">👷 Repasser Équipier</button>` : `<button class="n" data-act="acc" data-a="assistante" data-uid="${esc(t.dataset.uid)}">🗂️ Passer Assistante</button>`);
     t.classList.add("on"); const pop = document.createElement("div"); pop.className = "pop"; pop.innerHTML = menu; t.parentNode.appendChild(pop);
     return;
   }
@@ -1637,6 +1721,11 @@ document.addEventListener("click", async e => {
   if (act === "push-on") return pushOn(t);
   if (act === "sz") { const was = t.classList.contains("on"); t.parentNode.querySelectorAll("button").forEach(b => b.classList.remove("on")); if (!was) t.classList.add("on"); const mm = $("#m-msg"); if (mm) mm.innerHTML = ""; return; }
   if (act === "taille" && r.parts[0] === "tenue") return askTaille(r.parts[1], t.dataset.k);
+  if (act === "recadrer") { const rr = parseRoute(); if (rr.parts[0] === "machine") recadrer(rr.parts[1]); return; }
+  if (act === "ptab") { PTAB = t.dataset.v; return softRender(); }
+  if (act === "owner") return askOwner(t.dataset.id);
+  if (act === "statut-p") return askStatutP(r.parts[1]);
+  if (act === "own-add") return askOwnAdd(+t.dataset.n);
   if (act === "pers-add") return askPersonne(null);
   if (act === "pers-edit" && r.parts[0] === "tenue") return askPersonne(r.parts[1]);
   if (act === "pers-actif" && r.parts[0] === "tenue") return askPersActif(r.parts[1], t.dataset.v);
@@ -1812,7 +1901,7 @@ document.addEventListener("input", e => {
   if (el.id === "home-search") { const v = el.value.trim(); if (v) { focusSearch = true; go(`#/tout?q=${encodeURIComponent(v)}`); } return; }
   if (el.id === "tenue-search") {
     clearTimeout(searchT);
-    searchT = setTimeout(() => { const v = el.value.trim(); history.replaceState(null, "", `#/tenues${v ? "?q=" + encodeURIComponent(v) : ""}`); const pos = el.selectionStart; render(false);
+    searchT = setTimeout(() => { const v = el.value.trim(), base = parseRoute().parts[0] === "tenues" ? "#/tenues" : "#/"; history.replaceState(null, "", `${base}${v ? "?q=" + encodeURIComponent(v) : ""}`); const pos = el.selectionStart; render(false);
       const s2 = $("#tenue-search"); if (s2) { s2.focus(); try { s2.setSelectionRange(pos, pos); } catch (_) {} } }, 200);
     return;
   }
@@ -1917,9 +2006,87 @@ async function showPhotos() {
 document.addEventListener("change", async e => {
   if (!["photo-input", "photo-cam"].includes(e.target.id) || !e.target.files || !e.target.files[0]) return;
   const r = parseRoute(); if (r.parts[0] !== "machine") return;
-  $("#photo-box").textContent = "Préparation de la photo…";
-  try { await addPhoto(r.parts[1], e.target.files[0]); } catch (err) { $("#photo-box").textContent = "Cette photo n'a pas pu être lue. Essaie une autre."; }
+  const f = e.target.files[0]; e.target.value = "";
+  openCadre(r.parts[1], f);
 });
+
+/* ---------- cadrage de la photo : déplacer, zoomer (même plus petit que le cadre), tourner, puis valider ---------- */
+async function loadBitmap(src) {
+  try { return await createImageBitmap(src, { imageOrientation: "from-image" }); } catch (e) {}
+  return await new Promise((ok, ko) => { const img = new Image(), url = URL.createObjectURL(src); img.onload = () => { URL.revokeObjectURL(url); ok(img); }; img.onerror = () => { URL.revokeObjectURL(url); ko(new Error("photo illisible")); }; img.src = url; });
+}
+let CADRE = null;
+async function openCadre(id, file) {
+  let bmp; try { bmp = await loadBitmap(file); } catch (e) { return infoModal("Photo illisible", `<p class="mq">Cette photo n'a pas pu être lue. Essaie une autre.</p>`); }
+  const C = CADRE = { id, bmp, rot: 0, fine: 0, ox: 0, oy: 0, s: 1, pts: new Map() };
+  const iw = () => (C.rot % 180 ? bmp.height : bmp.width), ih = () => (C.rot % 180 ? bmp.width : bmp.height);
+  C.cover = () => Math.max(1 / iw(), 0.75 / ih());
+  C.contain = () => Math.min(1 / iw(), 0.75 / ih());
+  C.min = () => C.contain() * 0.35; C.max = () => C.cover() * 6;
+  C.s = C.cover();
+  openModal({ title: "Cadrer la photo", center: true, ok: "Valider la photo", cancel: "Annuler",
+    html: `<div class="cadre" id="cd-box"><canvas id="cd-cv"></canvas></div>
+      <p class="muted" style="margin:6px 0 4px;text-align:center">Glisse pour déplacer · pince ou curseur pour zoomer</p>
+      <div class="cdrow"><span>🔍</span><input type="range" id="cd-zoom" min="0" max="1000" value="0"><span>🔎</span></div>
+      <div class="cdrow"><span title="Redresser">📐</span><input type="range" id="cd-fine" min="-30" max="30" step="0.5" value="0"><b id="cd-fine-v">0°</b></div>
+      <div class="cdbtns"><button type="button" class="btn light" data-cd="l">↺ 90°</button><button type="button" class="btn light" data-cd="r">↻ 90°</button><button type="button" class="btn light" data-cd="all">Tout voir</button><button type="button" class="btn light" data-cd="fill">Remplir</button></div>`,
+    onOpen: d => cadreWire(d),
+    onOk: async () => {
+      const cv = document.createElement("canvas"); cv.width = 1600; cv.height = 1200;
+      cadreDraw(cv.getContext("2d"), 1600, 1200);
+      const blob = await new Promise(ok => cv.toBlob(ok, "image/jpeg", 0.85));
+      if (!blob) { $("#m-msg").innerHTML = `<div class="msg err">La photo n'a pas pu être préparée. Réessaie.</div>`; return false; }
+      CADRE = null; const b = $("#photo-box"); if (b) b.textContent = "Préparation de la photo…";
+      try { await addPhoto(id, blob); } catch (e) { const b2 = $("#photo-box"); if (b2) b2.textContent = "Cette photo n'a pas pu être lue. Essaie une autre."; }
+      return true;
+    } });
+}
+function cadreDraw(ctx, W, H) {
+  const C = CADRE; if (!C) return;
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
+  ctx.save(); ctx.translate(W / 2 + C.ox * W, H / 2 + C.oy * W); ctx.rotate((C.rot + C.fine) * Math.PI / 180); ctx.scale(C.s * W, C.s * W);
+  ctx.imageSmoothingQuality = "high"; ctx.drawImage(C.bmp, -C.bmp.width / 2, -C.bmp.height / 2); ctx.restore();
+}
+function cadreWire(d) {
+  const C = CADRE, box = d.querySelector("#cd-box"), cv = d.querySelector("#cd-cv"), z = d.querySelector("#cd-zoom"), fi = d.querySelector("#cd-fine");
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const size = () => { const w = box.clientWidth; cv.width = Math.round(w * dpr); cv.height = Math.round(w * 0.75 * dpr); };
+  const toZ = () => { z.value = Math.round(1000 * Math.log(C.s / C.min()) / Math.log(C.max() / C.min())); };
+  const fromZ = () => { C.s = C.min() * Math.pow(C.max() / C.min(), z.value / 1000); };
+  const clampS = () => { C.s = Math.min(C.max(), Math.max(C.min(), C.s)); };
+  const draw = () => { if (CADRE !== C) return; if (!cv.width) size(); cadreDraw(cv.getContext("2d"), cv.width, cv.height); };
+  C.redraw = () => { clampS(); toZ(); draw(); };
+  size(); C.redraw();
+  z.addEventListener("input", () => { fromZ(); draw(); });
+  fi.addEventListener("input", () => { C.fine = +fi.value; d.querySelector("#cd-fine-v").textContent = `${C.fine}°`; draw(); });
+  d.querySelectorAll("[data-cd]").forEach(b => b.addEventListener("click", () => {
+    const k = b.dataset.cd;
+    if (k === "l" || k === "r") { const cov = Math.abs(C.s - C.cover()) < 1e-9; C.rot = (C.rot + (k === "r" ? 90 : 270)) % 360; if (cov) C.s = C.cover(); }
+    if (k === "all") { C.s = C.contain(); C.ox = C.oy = 0; }
+    if (k === "fill") { C.s = C.cover(); C.ox = C.oy = 0; }
+    C.redraw();
+  }));
+  let last = null;
+  const dist = () => { const p = [...C.pts.values()]; return p.length < 2 ? 0 : Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y); };
+  const mid = () => { const p = [...C.pts.values()]; return { x: p.reduce((a, q) => a + q.x, 0) / p.length, y: p.reduce((a, q) => a + q.y, 0) / p.length }; };
+  box.addEventListener("pointerdown", e => { box.setPointerCapture(e.pointerId); C.pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); last = { m: mid(), d: dist() }; e.preventDefault(); });
+  box.addEventListener("pointermove", e => {
+    if (!C.pts.has(e.pointerId)) return; C.pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const m = mid(), dd = dist(), w = box.clientWidth || 1;
+    if (last) { C.ox += (m.x - last.m.x) / w; C.oy += (m.y - last.m.y) / w; if (dd && last.d) C.s *= dd / last.d; }
+    last = { m, d: dd }; C.redraw();
+  });
+  const up = e => { C.pts.delete(e.pointerId); last = C.pts.size ? { m: mid(), d: dist() } : null; };
+  box.addEventListener("pointerup", up); box.addEventListener("pointercancel", up);
+  box.addEventListener("wheel", e => { e.preventDefault(); C.s *= Math.exp(-e.deltaY / 500); C.redraw(); }, { passive: false });
+}
+async function recadrer(id) {
+  const m = S.machines[id], key = latestLocal[id] || ((PHOTOS_WAIT.filter(p => p.id === id && p.kind === "main").pop() || {}).key) || (m && m.photo);
+  if (!key) return;
+  const url = await photoURL(key);
+  if (!url) return infoModal("Pas de réseau", `<p class="mq">La photo n'est pas encore chargée : il faut du réseau.</p>`);
+  try { const blob = await (await fetch(url)).blob(); openCadre(id, blob); } catch (e) { infoModal("Photo illisible", `<p class="mq">La photo n'a pas pu être ouverte.</p>`); }
+}
 
 /* ---------- connexion ---------- */
 const NEED_PWD = /type=(invite|recovery)/.test(location.hash);
