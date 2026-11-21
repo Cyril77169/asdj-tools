@@ -1,7 +1,7 @@
 /* ASDJ - Tools : suivi du matériel par famille et par équipe.
    Données partagées entre les comptes connectés (Supabase), copie locale + file d'attente pour le hors ligne. */
 "use strict";
-const APP_V = 18;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
+const APP_V = 19;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
 const CFG = window.APP_CONFIG;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -549,7 +549,7 @@ function viewHomeEquipes(q) {
   return header("ASDJ - Tools", "Au service des jardins", { home: true, right: GEAR() }) +
     `<main>${segHTML("e")}${alertBandHTML(false)}
     <div class="sh2"><h3>Chefs d'équipe</h3></div>
-    <div class="tgrid">${teamNums().map(n => teamCard(n, all)).join("")}
+    <div class="tgrid">${teamNums().map(n => { const p = teamPannes(n); return teamCard(n, all).replace("</a>", `${p ? `<span class="tpan">${p} panne${p > 1 ? "s" : ""} signalée${p > 1 ? "s" : ""} au total</span>` : ""}</a>`); }).join("")}
       <a class="tcard" href="#/equipe/depot" style="--c:var(--s-disponible);background:linear-gradient(90deg,var(--s-disponible) 0 100%) top/100% 7px no-repeat,#fff"><span class="tnum" style="background:var(--s-disponible)">D</span><b>Dépôt</b><small>${dep.length} machine${dep.length > 1 ? "s" : ""}</small><span class="tok" style="color:#1565c0">au dépôt ou en réparation</span></a></div>
     ${isChef() ? `<div class="addbar"><button class="btn light" data-act="team-add">+ Ajouter une équipe</button></div>` : ""}
     ${voitTenues() ? `<div class="sh2"><h3>Personnel</h3></div>${persListHTML(txt)}` : ""}
@@ -1015,7 +1015,7 @@ const plaqueHTML = (m, big) => `<span class="plate ${big ? "big" : ""} ${m.plaqu
 const vsc = id => `var(--s-${id})`;
 function segHTML(on) {
   const n = alertes().length;
-  return `<div class="seg three"><button class="${on === "e" ? "on" : ""}" data-act="go-r" data-h="#/">👥 Équipes</button><button class="${on === "m" ? "on" : ""}" data-act="go-r" data-h="#/machines">🔧 Machines</button><button class="${on === "v" ? "on" : ""}" data-act="go-r" data-h="#/vehicules">🚐 Véhicules${n ? ` <span class="due late">${n}</span>` : ""}</button></div>`;
+  return `<div class="seg three"><button class="${on === "m" ? "on" : ""}" data-act="go-r" data-h="#/">🔧 Machines</button><button class="${on === "v" ? "on" : ""}" data-act="go-r" data-h="#/vehicules">🚐 Véhicules${n ? ` <span class="due late">${n}</span>` : ""}</button><button class="${on === "e" ? "on" : ""}" data-act="go-r" data-h="#/equipes">👥 Équipes</button></div>`;
 }
 function alertBandHTML(detail) {
   const a = alertes(); if (!a.length) return "";
@@ -1581,10 +1581,9 @@ function render(nav) {
   const r = parseRoute(); const [a, b] = r.parts;
   if (nav && DRAFT && !(a === "machine" && b === DRAFT.id)) { /* on garde le brouillon pour le retour sur la fiche */ }
   let html;
-  if (!a) html = viewHomeEquipes(r.q);
-  else if (a === "machines") html = viewHome();
+  if (!a || a === "machines") html = viewHome();
   else if (a === "famille") html = viewFamille(b, r.q);
-  else if (a === "equipes") html = viewEquipes();
+  else if (a === "equipes") html = viewHomeEquipes(r.q);
   else if (a === "equipe") html = viewEquipe(b, r.q);
   else if (a === "tout") html = viewTout(r.q);
   else if (a === "machine") html = isVeh(S.machines[b]) ? viewVehicule(S.machines[b]) : viewMachine(b);
@@ -1604,7 +1603,7 @@ function render(nav) {
   if (a === "activite" && isChef() && (nav || ACT.key !== actFilter().key)) loadActivite(true);
   if (a === "acces" && isChef() && nav) loadAcces();
   if (a === "parametres") loadParams();
-  if ((!a || ["tenues", "tenue", "compteur"].includes(a)) && voitTenues() && (nav || PERS == null)) loadPersonnel(true);
+  if (["equipes", "tenues", "tenue", "compteur"].includes(a) && voitTenues() && (nav || PERS == null)) loadPersonnel(true);
   if (a === "equipe") showPhotos();
   if (a === "tout" && focusSearch) { focusSearch = false; const s = $("#search"); if (s) { s.focus(); const n = s.value.length; try { s.setSelectionRange(n, n); } catch (_) {} } }
   pendingRender = false;
@@ -1901,7 +1900,7 @@ document.addEventListener("input", e => {
   if (el.id === "home-search") { const v = el.value.trim(); if (v) { focusSearch = true; go(`#/tout?q=${encodeURIComponent(v)}`); } return; }
   if (el.id === "tenue-search") {
     clearTimeout(searchT);
-    searchT = setTimeout(() => { const v = el.value.trim(), base = parseRoute().parts[0] === "tenues" ? "#/tenues" : "#/"; history.replaceState(null, "", `${base}${v ? "?q=" + encodeURIComponent(v) : ""}`); const pos = el.selectionStart; render(false);
+    searchT = setTimeout(() => { const v = el.value.trim(), base = parseRoute().parts[0] === "tenues" ? "#/tenues" : "#/equipes"; history.replaceState(null, "", `${base}${v ? "?q=" + encodeURIComponent(v) : ""}`); const pos = el.selectionStart; render(false);
       const s2 = $("#tenue-search"); if (s2) { s2.focus(); try { s2.setSelectionRange(pos, pos); } catch (_) {} } }, 200);
     return;
   }
