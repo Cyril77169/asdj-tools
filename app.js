@@ -1,7 +1,7 @@
 /* ASDJ - Tools : suivi du matériel par famille et par équipe.
    Données partagées entre les comptes connectés (Supabase), copie locale + file d'attente pour le hors ligne. */
 "use strict";
-const APP_V = 19;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
+const APP_V = 20;   // à augmenter à chaque version (avec version.json, ?v=N et le cache de sw.js)
 const CFG = window.APP_CONFIG;
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1478,7 +1478,7 @@ function viewTenues(q) {
 }
 function persListHTML(txt) {
   const all = persActifs(), list = txt ? all.filter(p => fuzzyScore(txt, `${p.prenom} | ${persEq(p) || "équipier"}`) >= 0) : all;
-  const card = p => { const eq = chefDe(p), nm = matsDe(eq).length; return `<a class="pp" href="#/tenue/${encodeURIComponent(p.id)}"><span class="av2" style="background:${persCol(p)}">${esc((p.prenom || "?")[0].toUpperCase())}</span><b>${esc(p.prenom)}</b><small>${eq != null ? esc(persEq(p)) : "Équipier"}</small>${eq != null ? `<span class="ok2">🧰 ${nm} machine${nm > 1 ? "s" : ""}</span>` : ""}</a>`; };
+  const card = p => { const eq = chefDe(p), ko = matsDe(eq).filter(m => URGENTS.includes(m.statut)).length; const nt = manque(p); return `<a class="pp" href="#/tenue/${encodeURIComponent(p.id)}">${nt ? `<span class="ppnotif" title="${nt} taille${nt > 1 ? "s" : ""} de tenue non renseignée${nt > 1 ? "s" : ""}">👕 ${nt}</span>` : ""}<span class="av2" style="background:${persCol(p)}">${esc((p.prenom || "?")[0].toUpperCase())}</span><b>${esc(p.prenom)}</b><small>${eq != null ? esc(persEq(p)) : "Équipier"}</small>${ko ? `<span class="ko2 arret" title="${ko} machine${ko > 1 ? "s" : ""} en problème, en réparation ou HS">🧰 ${ko} à l'arrêt</span>` : ""}</a>`; };
   return `
     <input class="search" id="tenue-search" type="search" placeholder="🔍 Chercher une personne…" autocomplete="off" value="${esc(txt)}">
     ${PERS == null ? `<p class="muted">${esc(PERS_ERR || "Chargement…")}</p>` : `<div class="ppl">${list.map(card).join("") || `<div class="empty" style="grid-column:1/-1">${all.length ? "Personne trouvé." : "Personne pour l'instant : ajoute le personnel avec le bouton ci-dessous."}</div>`}</div>`}
